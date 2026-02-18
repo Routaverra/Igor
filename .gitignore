@@ -1,0 +1,6 @@
+scratch/
+.cpcache/
+.claude/
+.nrepl-port
+target/
+*.class
