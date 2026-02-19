@@ -1,7 +1,7 @@
 (ns igor.core
   (:refer-clojure :exclude [+ - * / = > < >= <= and or not when if cond
                              mod rem inc dec even? odd? pos? neg? zero?
-                             true? false? not= contains? count max min nth])
+                             true? false? not= contains? count max min nth abs])
   (:require [igor.api :as api]
             [igor.protocols :as protocols]
             [igor.solver :as solver]
@@ -84,6 +84,8 @@
 (def min terms/min*)
 (def count terms/count*)
 (def nth terms/nth*)
+(def abs terms/abs*)
+(def all-different terms/all-different)
 (def contains? terms/contains?*)
 (def intersection terms.set/intersection)
 (def difference terms.set/difference)

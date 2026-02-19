@@ -11,7 +11,7 @@
          greater-than less-than gte lte and* or* not* when*
          iff cond* contains?* count* max* min* nth*
          even?* odd* pos?* neg?* zero?* true?* false?*
-         modulo remainder
+         modulo remainder abs* all-different
          translate-comparator)
 
 (defn translation-error! [self]
@@ -133,6 +133,28 @@
   (bindings [self] (api/unify-argv-bindings self))
   (validate [self] (api/validate-domains self))
   (translate [self] (str "min(" (to-literal-array (map protocols/translate (:argv self))) ")")))
+
+(defrecord TermAbs [argv]
+  protocols/IExpress
+  (write [_self] (apply list 'abs (map protocols/write argv)))
+  (codomain [self] {types/Numeric self})
+  (domainv [self] [{types/Numeric self}])
+  (decisions [self] (api/unify-argv-decisions self))
+  (bindings [self] (api/unify-argv-bindings self))
+  (validate [self] (api/validate-domains self))
+  (translate [self] (str "abs(" (protocols/translate (first (:argv self))) ")")))
+
+(defrecord TermAllDifferent [argv]
+  protocols/IInclude
+  (mzn-includes [_self] #{"alldifferent.mzn"})
+  protocols/IExpress
+  (write [_self] (apply list 'all-different (map protocols/write argv)))
+  (codomain [self] {types/Bool self})
+  (domainv [self] (take (clojure.core/count argv) (repeat {types/Numeric self})))
+  (decisions [self] (api/unify-argv-decisions self))
+  (bindings [self] (api/unify-argv-bindings self))
+  (validate [self] (api/validate-domains self))
+  (translate [self] (str "alldifferent(" (to-literal-array (map protocols/translate (:argv self))) ")")))
 
 (defrecord TermTrue? [argv]
   protocols/IExpress
@@ -505,6 +527,14 @@
 (defn zero?* [x] (api/cacheing-validate (->TermZero? [x])))
 (defn modulo [& args] (api/cacheing-validate (->TermMod (vec args))))
 (defn remainder [& args] (api/cacheing-validate (->TermRem (vec args))))
+(defn abs* [x]
+  (if (number? x)
+    (Math/abs (long x))
+    (api/cacheing-validate (->TermAbs [x]))))
+(defn all-different [& args]
+  (if (every? number? args)
+    (clojure.core/= (clojure.core/count args) (clojure.core/count (distinct args)))
+    (api/cacheing-validate (->TermAllDifferent (vec args)))))
 (defn count* [x] (api/cacheing-validate (->TermCount [x])))
 (defn nth* [elems idx]
   {:pre [(vector? elems) (clojure.core/>= (clojure.core/count elems) 1)]}

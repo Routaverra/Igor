@@ -415,6 +415,32 @@
                              (i/= (nth elems i) (+ (* i 11) 55)))))]
       (is (= 77 (get solution result))))))
 
+(deftest abs-test
+  (testing "abs with decisions"
+    (let [x (i/fresh-int (range -100 101))
+          y (i/fresh-int (range 101))]
+      (is (= 7 (get (i/satisfy (i/and (i/= x -7) (i/= y (i/abs x)))) y)))
+      (is (= 5 (get (i/satisfy (i/and (i/= x 5) (i/= y (i/abs x)))) y)))
+      (is (= 0 (get (i/satisfy (i/and (i/= x 0) (i/= y (i/abs x)))) y)))))
+
+  (testing "abs with literals evaluates in Clojure"
+    (is (= 7 (i/abs -7)))
+    (is (= 5 (i/abs 5)))
+    (is (= 0 (i/abs 0)))))
+
+(deftest all-different-test
+  (testing "all-different constraint"
+    (let [a (i/fresh-int (range 5))
+          b (i/fresh-int (range 5))
+          c (i/fresh-int (range 5))
+          solution (i/satisfy (i/all-different a b c))
+          vals (map solution [a b c])]
+      (is (= 3 (count (distinct vals))))))
+
+  (testing "all-different with literals evaluates in Clojure"
+    (is (true? (i/all-different 1 2 3)))
+    (is (false? (i/all-different 1 2 1)))))
+
 (deftest mod-rem-test
   (testing "mod and rem"
     (is (some?

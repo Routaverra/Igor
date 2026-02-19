@@ -20,13 +20,8 @@
           send  (i/+ (i/* s 1000) (i/* e 100) (i/* n 10) d)
           more  (i/+ (i/* m 1000) (i/* o 100) (i/* r 10) e)
           money (i/+ (i/* m 10000) (i/* o 1000) (i/* n 100) (i/* e 10) y)
-          ;; all-different via pairwise not=
-          all-diff (->> (for [i (range (count digits))
-                              j (range (inc i) (count digits))]
-                          (i/not= (nth digits i) (nth digits j)))
-                        (apply i/and))
           constraint (i/and
-                      all-diff
+                      (apply i/all-different digits)
                       (i/= (i/+ send more) money)
                       (i/> s 0)   ;; leading digits nonzero
                       (i/> m 0))
@@ -48,11 +43,6 @@
           cells (vec (repeatedly 9 #(i/fresh-int cell-domain)))
           [a b c d e f g h k] cells
           magic-sum (i/fresh-int (range 1 46) "magic")
-          ;; all different
-          all-diff (->> (for [i (range 9)
-                              j (range (inc i) 9)]
-                          (i/not= (nth cells i) (nth cells j)))
-                        (apply i/and))
           ;; rows, cols, diags all equal magic-sum
           sums (i/and
                 (i/= magic-sum (i/+ a b c))
@@ -63,7 +53,7 @@
                 (i/= magic-sum (i/+ c f k))
                 (i/= magic-sum (i/+ a e k))
                 (i/= magic-sum (i/+ c e g)))
-          solution (i/satisfy (i/and all-diff sums))
+          solution (i/satisfy (i/and (apply i/all-different cells) sums))
           vals* (mapv solution cells)
           ms (get solution magic-sum)]
       ;; magic constant for 3x3 is always 15
@@ -154,10 +144,7 @@
           ;; queens[i] = column of queen in row i
           queens (vec (repeatedly n #(i/fresh-int col-domain)))
           ;; all columns different
-          col-diff (->> (for [i (range n)
-                              j (range (inc i) n)]
-                          (i/not= (nth queens i) (nth queens j)))
-                        (apply i/and))
+          col-diff (apply i/all-different queens)
           ;; no two queens on same diagonal
           diag-diff (->> (for [i (range n)
                                j (range (inc i) n)
@@ -293,16 +280,14 @@
       (is (= 42 (get solution b)))
       (is (= 42 (get solution c))))))
 
-(deftest abs-value-via-cond-test
-  (testing "absolute value expressed via cond"
+(deftest abs-value-test
+  (testing "absolute value via i/abs"
     (let [x (i/fresh-int (range -100 101))
           abs-x (i/fresh-int (range 101))
           solution (i/satisfy
                     (i/and
                      (i/= x -7)
-                     (i/= abs-x (i/cond
-                                  (i/>= x 0) x
-                                  :else (i/- 0 x)))))]
+                     (i/= abs-x (i/abs x))))]
       (is (= -7 (get solution x)))
       (is (= 7 (get solution abs-x))))))
 
@@ -382,34 +367,19 @@
   (testing "minimize total voice movement between two chords"
     ;; Given chord 1 = [0, 4, 7] (C major)
     ;; Find assignment of C minor {0, 3, 7} to 3 voices minimizing total movement.
-    ;; Use auxiliary variables for absolute differences to keep MiniZinc simple.
     (let [voice-domain (range 12)
           v1 (i/fresh-int voice-domain "v1")
           v2 (i/fresh-int voice-domain "v2")
           v3 (i/fresh-int voice-domain "v3")
-          d1 (i/fresh-int (range 12) "d1")
-          d2 (i/fresh-int (range 12) "d2")
-          d3 (i/fresh-int (range 12) "d3")
           constraint (i/and
                       ;; chord 2 is C minor: {0, 3, 7}
                       (i/or (i/= v1 0) (i/= v1 3) (i/= v1 7))
                       (i/or (i/= v2 0) (i/= v2 3) (i/= v2 7))
                       (i/or (i/= v3 0) (i/= v3 3) (i/= v3 7))
                       ;; all different
-                      (i/not= v1 v2)
-                      (i/not= v1 v3)
-                      (i/not= v2 v3)
-                      ;; |v1 - 0| = d1
-                      (i/>= d1 v1) (i/>= d1 (i/- 0 v1))
-                      (i/or (i/= d1 v1) (i/= d1 (i/- 0 v1)))
-                      ;; |v2 - 4| = d2
-                      (i/>= d2 (i/- v2 4)) (i/>= d2 (i/- 4 v2))
-                      (i/or (i/= d2 (i/- v2 4)) (i/= d2 (i/- 4 v2)))
-                      ;; |v3 - 7| = d3
-                      (i/>= d3 (i/- v3 7)) (i/>= d3 (i/- 7 v3))
-                      (i/or (i/= d3 (i/- v3 7)) (i/= d3 (i/- 7 v3))))
+                      (i/all-different v1 v2 v3))
           ;; minimize total = maximize negative total
-          neg-total (i/- 0 (i/+ d1 d2 d3))
+          neg-total (i/- 0 (i/+ (i/abs (i/- v1 0)) (i/abs (i/- v2 4)) (i/abs (i/- v3 7))))
           solution (i/maximize neg-total constraint)
           v1* (get solution v1) v2* (get solution v2) v3* (get solution v3)
           total-move (+ (Math/abs (- v1* 0))
@@ -431,11 +401,6 @@
     (let [n 5
           node-domain (range n)
           succ (vec (repeatedly n #(i/fresh-int node-domain)))
-          ;; all successors must be distinct (each node visited exactly once)
-          all-diff (->> (for [i (range n)
-                              j (range (inc i) n)]
-                          (i/not= (nth succ i) (nth succ j)))
-                        (apply i/and))
           ;; No self-loops: succ[i] != i
           no-self (->> (for [i (range n)]
                          (i/not= (nth succ i) i))
@@ -452,12 +417,7 @@
                                (i/nth (vec succ) (nth pos k)))))
           ;; succ[last node in tour] must be 0 (return to start)
           return-to-start (i/= (i/nth (vec succ) (nth pos (dec n))) 0)
-          ;; all positions distinct
-          pos-diff (->> (for [i (range n)
-                              j (range (inc i) n)]
-                          (i/not= (nth pos i) (nth pos j)))
-                        (apply i/and))
-          solution (i/satisfy (i/and all-diff no-self chain return-to-start pos-diff))
+          solution (i/satisfy (i/and (apply i/all-different succ) no-self chain return-to-start (apply i/all-different pos)))
           succ* (mapv solution succ)
           pos* (mapv solution pos)]
       ;; Verify: all successors are distinct
@@ -485,10 +445,6 @@
           cost-domain (range 101)
           ;; succ[i] = next node after i
           succ (vec (repeatedly n #(i/fresh-int node-domain)))
-          ;; all successors distinct
-          all-diff (->> (for [i (range n) j (range (inc i) n)]
-                          (i/not= (nth succ i) (nth succ j)))
-                        (apply i/and))
           ;; no self-loops
           no-self (->> (for [i (range n)]
                          (i/not= (nth succ i) i))
@@ -512,10 +468,7 @@
                          (i/= (nth pos (inc k))
                                (i/nth (vec succ) (nth pos k)))))
           return-to-start (i/= (i/nth (vec succ) (nth pos (dec n))) 0)
-          pos-diff (->> (for [i (range n) j (range (inc i) n)]
-                          (i/not= (nth pos i) (nth pos j)))
-                        (apply i/and))
-          constraint (i/and all-diff no-self edge-constraints chain return-to-start pos-diff)
+          constraint (i/and (apply i/all-different succ) no-self edge-constraints chain return-to-start (apply i/all-different pos))
           ;; minimize total cost = maximize negative total cost
           solution (i/maximize (i/- 0 total-cost) constraint)
           succ* (mapv solution succ)
@@ -561,10 +514,6 @@
           pos-domain (range n)
           ;; pos[i] = position of job i in the schedule (0-indexed)
           pos (vec (repeatedly n #(i/fresh-int pos-domain)))
-          ;; all positions distinct
-          all-diff (->> (for [i (range n) j (range (inc i) n)]
-                          (i/not= (nth pos i) (nth pos j)))
-                        (apply i/and))
           ;; completion time of job i = sum of processing times of all jobs
           ;; scheduled at positions <= pos[i].
           ;; We use: for each job i, the completion time is bounded by:
@@ -589,9 +538,7 @@
                               (i/when (i/= (nth pos i) k)
                                 (i/= (nth job-at k) i)))
                             (apply i/and))
-          job-at-diff (->> (for [i (range n) j (range (inc i) n)]
-                             (i/not= (nth job-at i) (nth job-at j)))
-                           (apply i/and))
+          job-at-diff (apply i/all-different job-at)
           ;; finish[k] = sum of proc-times[job-at[0..k]]
           ;; Use cumulative approach: finish at position k = sum(i=0..k, proc-time[job-at[i]])
           ;; For each position k, the job there must finish by its deadline.
@@ -611,7 +558,7 @@
                                       (for [k (range n)]
                                         (i/<= (nth finish-vars k)
                                                (i/nth (vec deadlines) (nth job-at k)))))
-          solution (i/satisfy (i/and all-diff job-at-diff inverse-link
+          solution (i/satisfy (i/and (apply i/all-different pos) job-at-diff inverse-link
                                      finish-0 finish-chain deadline-constraints))
           pos* (mapv solution pos)
           job-at* (mapv solution job-at)
@@ -675,17 +622,11 @@
           cells (vec (for [_ (range n)]
                        (vec (repeatedly n #(i/fresh-int val-domain)))))
           ;; row constraints: all different in each row
-          row-diff (->> (for [r (range n)
-                              i (range n)
-                              j (range (inc i) n)]
-                          (i/not= (get-in cells [r i]) (get-in cells [r j])))
-                        (apply i/and))
+          row-diff (apply i/and (for [r (range n)]
+                                  (apply i/all-different (nth cells r))))
           ;; column constraints: all different in each column
-          col-diff (->> (for [c (range n)
-                              i (range n)
-                              j (range (inc i) n)]
-                          (i/not= (get-in cells [i c]) (get-in cells [j c])))
-                        (apply i/and))
+          col-diff (apply i/and (for [c (range n)]
+                                  (apply i/all-different (for [r (range n)] (get-in cells [r c])))))
           solution (i/satisfy (i/and row-diff col-diff))
           grid (vec (for [r (range n)]
                       (vec (for [c (range n)]
@@ -704,15 +645,11 @@
     (let [n 5
           perm-domain (range n)
           p (vec (repeatedly n #(i/fresh-int perm-domain)))
-          ;; p is a permutation: all different
-          all-diff (->> (for [i (range n) j (range (inc i) n)]
-                          (i/not= (nth p i) (nth p j)))
-                        (apply i/and))
           ;; involution: p[p[i]] = i for all i
           involution (->> (for [i (range n)]
                             (i/= (i/nth p (nth p i)) i))
                           (apply i/and))
-          solution (i/satisfy (i/and all-diff involution))
+          solution (i/satisfy (i/and (apply i/all-different p) involution))
           p* (mapv solution p)]
       ;; Verify it's a permutation
       (is (= (set (range n)) (set p*)))
@@ -976,10 +913,7 @@
                          (i/= (nth pos (inc k))
                                (i/nth (vec next-major) (nth pos k)))))
           close (i/= (i/nth (vec next-major) (nth pos (dec n))) 0)
-          all-diff (->> (for [i (range n) j (range (inc i) n)]
-                          (i/not= (nth pos i) (nth pos j)))
-                        (apply i/and))
-          solution (i/satisfy (i/and start chain close all-diff))
+          solution (i/satisfy (i/and start chain close (apply i/all-different pos)))
           pos* (mapv solution pos)
           choice* (mapv solution choice)]
       (is (= (set (range n)) (set pos*)))

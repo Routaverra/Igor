@@ -11,3 +11,6 @@
 
 (defprotocol IExpand
   (expand [self]))
+
+(defprotocol IInclude
+  (mzn-includes [self]))

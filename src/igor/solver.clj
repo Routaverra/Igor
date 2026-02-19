@@ -86,6 +86,16 @@
        n))
    node))
 
+(defn collect-includes [node]
+  (let [includes (atom #{})]
+    (clojure.walk/prewalk
+     (fn [n]
+       (when (satisfies? protocols/IInclude n)
+         (swap! includes into (protocols/mzn-includes n)))
+       n)
+     node)
+    @includes))
+
 (def ^:dynamic *flatten?* true)
 
 (defn solve [{:keys [all? async?] :as opts}
@@ -143,7 +153,10 @@
                                (concat (map protocols/bindings constraints)
                                        (when objective [(protocols/bindings objective)]))))
         output-str (->output merged-decisions)
-        mzn (apply str (interpose "\n" (cond-> var-declarations-str
+        includes (into (collect-includes constraint-with-forced-decisions-and-expanded-terms)
+                       (when objective (collect-includes objective)))
+        include-strs (mapv #(str "include \"" % "\";") (sort includes))
+        mzn (apply str (interpose "\n" (cond-> (into include-strs var-declarations-str)
                                                constraint-str (conj constraint-str)
                                                :always (conj output-str directive-str))))]
     (if *debug*
