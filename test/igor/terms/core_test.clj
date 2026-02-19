@@ -354,6 +354,58 @@
              (i/satisfy
               (i/= 1 (i/count (i/bind (range 10) (i/fresh)))))))))))
 
+(deftest nth-test
+  (testing "nth with literal index"
+    (let [a (i/fresh-int int-domain)
+          b (i/fresh-int int-domain)
+          c (i/fresh-int int-domain)]
+      (is (= 10
+             (get
+              (i/satisfy
+               (i/and
+                (i/= a 10)
+                (i/= b 20)
+                (i/= c (i/nth [a b] 0))))
+              c)))
+      (is (= 20
+             (get
+              (i/satisfy
+               (i/and
+                (i/= a 10)
+                (i/= b 20)
+                (i/= c (i/nth [a b] 1))))
+              c)))))
+
+  (testing "nth with variable index"
+    (let [a (i/fresh-int int-domain)
+          idx (i/fresh-int (range 3))
+          elems [10 20 30]]
+      (is (= 20
+             (get
+              (i/satisfy
+               (i/and
+                (i/= idx 1)
+                (i/= a (i/nth elems idx))))
+              a)))))
+
+  (testing "nth single element"
+    (is (= 42
+           (only-val
+            (i/satisfy (i/= (i/nth [42] 0) (i/fresh-int int-domain)))))))
+
+  (testing "nth with decision elements and variable index"
+    (let [elems (vec (repeatedly 4 #(i/fresh-int int-domain)))
+          idx (i/fresh-int (range 4))
+          result (i/fresh-int int-domain)
+          solution (i/satisfy
+                    (apply i/conjunction
+                           (i/= idx 2)
+                           (i/= result (i/nth elems idx))
+                           (i/= (nth elems 2) 77)
+                           (for [i (range 4)]
+                             (i/= (nth elems i) (+ (* i 11) 55)))))]
+      (is (= 77 (get solution result))))))
+
 (deftest mod-rem-test
   (testing "mod and rem"
     (is (some?

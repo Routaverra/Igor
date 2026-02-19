@@ -9,7 +9,7 @@
 
 (declare plus product minus divide inc* dec* equals not-equals
          greater-than less-than gte lte and* or* not* when*
-         iff cond* contains?* count* max* min*
+         iff cond* contains?* count* max* min* nth*
          even?* odd* pos?* neg?* zero?* true?* false?*
          modulo remainder conjunction disjunction
          translate-comparator)
@@ -439,6 +439,40 @@
   (validate [self] (api/validate-domains self))
   (translate [self] (>> {:set (protocols/translate (first (:argv self)))} "(card({{set}}))")))
 
+(defrecord TermNth [argv n]
+  ;; argv = [elem0 elem1 ... elemN-1 idx], n = number of elements (not counting idx)
+  protocols/IExpand
+  (expand [_self]
+    (let [elems (subvec argv 0 n)
+          idx (get argv n)]
+      (if (clojure.core/= n 1)
+        (first elems)
+        (apply cond*
+          (concat
+            (mapcat (fn [i elem] [(equals idx i) elem])
+                    (range (clojure.core/dec n))
+                    (butlast elems))
+            [:else (last elems)])))))
+  protocols/IExpress
+  (write [_self] (list 'nth (mapv protocols/write (subvec argv 0 n)) (protocols/write (get argv n))))
+  (codomain [self]
+    (let [elem-types (->> (subvec argv 0 n)
+                          (map (comp set keys protocols/codomain)))]
+      (zipmap (apply clojure.set/intersection elem-types) (repeat self))))
+  (domainv [self]
+    ;; elements can be any type (consistent with each other), index is Numeric
+    (let [elem-domain (protocols/codomain self)]
+      (concat (repeat n elem-domain) [{types/Numeric self}])))
+  (decisions [self] (api/unify-argv-decisions self))
+  (bindings [self] (api/unify-argv-bindings self))
+  (validate [self]
+    (clojure.core/when (empty? (->> (subvec argv 0 n)
+                                     (map (comp set keys protocols/codomain))
+                                     (apply clojure.set/intersection)))
+      (throw (ex-info "nth requires consistent types across elements" {})))
+    (api/validate-domains self))
+  (translate [self] (translation-error! self)))
+
 ;; --- Constructor functions ---
 
 (defn plus [& args] (api/cacheing-validate (->TermPlus (vec args))))
@@ -476,6 +510,9 @@
 (defn modulo [& args] (api/cacheing-validate (->TermMod (vec args))))
 (defn remainder [& args] (api/cacheing-validate (->TermRem (vec args))))
 (defn count* [x] (api/cacheing-validate (->TermCount [x])))
+(defn nth* [elems idx]
+  {:pre [(vector? elems) (clojure.core/>= (clojure.core/count elems) 1)]}
+  (api/cacheing-validate (->TermNth (conj elems idx) (clojure.core/count elems))))
 
 ;; --- translate-comparator (moved from api) ---
 
