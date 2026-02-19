@@ -1128,3 +1128,363 @@
                    " is not a rising edge"))))
       ;; Path should be at most 8 steps
       (is (<= (dec (count active-path)) max-len)))))
+
+;; ============================================================
+;; 18. Species counterpoint
+;; ============================================================
+
+;; Shared infrastructure for species counterpoint constraint problems.
+;;
+;; All five species are modeled as constraint problems over a fixed cantus
+;; firmus (CF). The counterpoint (CP) voice is constrained above the CF.
+;; Pitch is represented as semitone offsets from C3 (MIDI 48), restricted
+;; to the C-major diatonic scale.
+;;
+;; Composable helpers build igor constraint terms for:
+;;   - Interval consonance (disjunction over allowed intervals)
+;;   - Motion analysis (similar motion into perfect consonances)
+;;   - Passing tone validation (stepwise approach and departure)
+;;   - Suspension preparation and resolution (fourth species)
+;;
+;; Each successive species reuses these helpers and adds structural rules,
+;; mirroring how counterpoint pedagogy layers concepts.
+
+(def ^:private diatonic-semitones
+  "C-major diatonic pitches as semitone offsets from C3, spanning two octaves."
+  [0 2 4 5 7 9 11 12 14 16 17 19 21 23 24])
+
+(def ^:private cf-melody
+  "Cantus firmus: C D E F G F E D C as semitone offsets from C3."
+  [0 2 4 5 7 5 4 2 0])
+
+(def ^:private cp-consonant-intervals
+  "Set of consonant harmonic intervals (semitones) within [0, 24].
+   An interval is consonant when (mod interval 12) is in {0 3 4 7 8 9}:
+   unison, m3, M3, P5, m6, M6, and their octave compounds."
+  (set (for [octave [0 12 24]
+             ic [0 3 4 7 8 9]
+             :let [interval (+ octave ic)]
+             :when (<= 0 interval 24)]
+         interval)))
+
+(def ^:private cp-perfect-intervals
+  "Set of perfect consonant intervals: unison, P5, P8, and compounds."
+  (set (for [octave [0 12 24]
+             ic [0 7]
+             :let [interval (+ octave ic)]
+             :when (<= 0 interval 24)]
+         interval)))
+
+(defn- cp-member-of
+  "Igor constraint: `expr` equals one of the values in `value-set`."
+  [expr value-set]
+  (apply i/disjunction (map #(i/= expr %) (sort value-set))))
+
+(defn- cp-consonant?
+  "Igor constraint: `interval-expr` is a consonant harmonic interval."
+  [interval-expr]
+  (cp-member-of interval-expr cp-consonant-intervals))
+
+(defn- cp-perfect?
+  "Igor constraint: `interval-expr` is a perfect consonance."
+  [interval-expr]
+  (cp-member-of interval-expr cp-perfect-intervals))
+
+(defn- cp-stepwise?
+  "Igor constraint: melodic `motion` is stepwise (at most 2 semitones
+   in either direction, i.e. a diatonic second)."
+  [motion]
+  (i/and (i/<= motion 2) (i/>= motion -2)))
+
+(defn- cp-no-similar-to-perfect
+  "Igor constraint: forbids arriving at a perfect consonance by similar
+   motion. `cf-motions` is a vector of concrete integers (CF melodic
+   intervals), allowing Clojure-level branching."
+  [intervals motions-cp cf-motions]
+  (apply i/conjunction
+    (for [t (range (count motions-cp))
+          :let [cf-m (nth cf-motions t)]]
+      ;; When the next interval is perfect, the CP must not move
+      ;; in the same direction as the CF.
+      (i/when (cp-perfect? (nth intervals (inc t)))
+        (cond
+          (pos? cf-m) (i/<= (nth motions-cp t) 0)   ;; CF rises -> CP must not rise
+          (neg? cf-m) (i/>= (nth motions-cp t) 0)    ;; CF falls -> CP must not fall
+          :else       true)))))                        ;; CF stationary -> no constraint
+
+(defn- cp-start-end-perfect
+  "Igor constraint: first and last intervals must be perfect consonances."
+  [intervals]
+  (i/and (cp-perfect? (first intervals))
+         (cp-perfect? (last intervals))))
+
+(deftest first-species-counterpoint-test
+  (testing "note-against-note: every interval consonant, no similar motion to perfect consonances"
+    ;; First species: one counterpoint note per cantus firmus note.
+    ;; All harmonic intervals must be consonant. No similar motion into
+    ;; perfect consonances. Counterpoint above CF. Start and end on
+    ;; a perfect consonance (unison or octave).
+    (let [cf cf-melody
+          n (count cf)
+          cp (vec (for [_ (range n)] (i/fresh-int diatonic-semitones)))
+          ;; Harmonic intervals: cp[t] - cf[t]
+          intervals (vec (for [t (range n)]
+                           (i/- (nth cp t) (nth cf t))))
+          ;; CP melodic motions
+          motions-cp (vec (for [t (range (dec n))]
+                            (i/- (nth cp (inc t)) (nth cp t))))
+          ;; CF melodic motions (concrete integers)
+          cf-motions (vec (for [t (range (dec n))]
+                            (- (nth cf (inc t)) (nth cf t))))
+          ;; All intervals consonant
+          all-consonant (apply i/conjunction (map cp-consonant? intervals))
+          ;; CP above CF
+          above (apply i/conjunction
+                  (for [t (range n)] (i/>= (nth cp t) (nth cf t))))
+          constraint (i/and all-consonant
+                            (cp-start-end-perfect intervals)
+                            above
+                            (cp-no-similar-to-perfect intervals motions-cp cf-motions))
+          solution (i/satisfy constraint)
+          cp* (mapv solution cp)]
+      ;; Every note is diatonic
+      (is (every? (set diatonic-semitones) cp*))
+      ;; Every interval is consonant
+      (doseq [t (range n)]
+        (is (contains? cp-consonant-intervals (- (nth cp* t) (nth cf t)))
+            (str "Beat " t ": interval " (- (nth cp* t) (nth cf t)) " not consonant")))
+      ;; First and last intervals are perfect
+      (is (contains? cp-perfect-intervals (- (first cp*) (first cf))))
+      (is (contains? cp-perfect-intervals (- (last cp*) (last cf))))
+      ;; CP above CF
+      (doseq [t (range n)]
+        (is (>= (nth cp* t) (nth cf t))))
+      ;; No similar motion into perfect consonances
+      (doseq [t (range (dec n))]
+        (let [int-next (- (nth cp* (inc t)) (nth cf (inc t)))
+              m-cp (- (nth cp* (inc t)) (nth cp* t))
+              m-cf (- (nth cf (inc t)) (nth cf t))]
+          (when (contains? cp-perfect-intervals int-next)
+            (is (not (and (pos? m-cp) (pos? m-cf)))
+                (str "Similar rising motion to perfect at beat " (inc t)))
+            (is (not (and (neg? m-cp) (neg? m-cf)))
+                (str "Similar falling motion to perfect at beat " (inc t)))))))))
+
+(deftest second-species-counterpoint-test
+  (testing "two half notes per whole: strong beats consonant, weak beats may be passing tones"
+    ;; Second species: two CP notes per CF note. Strong beats (even indices)
+    ;; must be consonant. Weak beats (odd indices) may be dissonant only if
+    ;; approached and left by step (passing tones).
+    (let [cf cf-melody
+          n-cf (count cf)
+          n-cp (* 2 n-cf)
+          cp (vec (for [_ (range n-cp)] (i/fresh-int diatonic-semitones)))
+          ;; Which CF note is active at each CP index
+          cf-at (vec (for [t (range n-cp)] (nth cf (quot t 2))))
+          ;; Harmonic intervals
+          intervals (vec (for [t (range n-cp)]
+                           (i/- (nth cp t) (nth cf-at t))))
+          ;; CP melodic motions
+          motions-cp (vec (for [t (range (dec n-cp))]
+                            (i/- (nth cp (inc t)) (nth cp t))))
+          ;; Strong beats consonant
+          strong-consonant (apply i/conjunction
+                             (for [t (range 0 n-cp 2)]
+                               (cp-consonant? (nth intervals t))))
+          ;; Weak-beat dissonances must be passing tones (stepwise in and out)
+          weak-passing (apply i/conjunction
+                         (for [t (range 1 (dec n-cp) 2)]
+                           (i/when (i/not (cp-consonant? (nth intervals t)))
+                             (i/and (cp-stepwise? (nth motions-cp (dec t)))
+                                    (cp-stepwise? (nth motions-cp t))))))
+          ;; CP above CF
+          above (apply i/conjunction
+                  (for [t (range n-cp)] (i/>= (nth cp t) (nth cf-at t))))
+          constraint (i/and strong-consonant weak-passing
+                            (cp-start-end-perfect intervals) above)
+          solution (i/satisfy constraint)
+          cp* (mapv solution cp)]
+      ;; Strong beats consonant
+      (doseq [t (range 0 n-cp 2)]
+        (is (contains? cp-consonant-intervals (- (nth cp* t) (nth cf-at t)))
+            (str "Strong beat " t " not consonant")))
+      ;; Weak-beat dissonances are stepwise
+      (doseq [t (range 1 (dec n-cp) 2)]
+        (let [interval (- (nth cp* t) (nth cf-at t))]
+          (when-not (contains? cp-consonant-intervals interval)
+            (is (<= (Math/abs (- (nth cp* t) (nth cp* (dec t)))) 2)
+                (str "Non-stepwise approach at weak beat " t))
+            (is (<= (Math/abs (- (nth cp* (inc t)) (nth cp* t))) 2)
+                (str "Non-stepwise departure from weak beat " t)))))
+      ;; Start/end perfect
+      (is (contains? cp-perfect-intervals (- (first cp*) (first cf-at))))
+      (is (contains? cp-perfect-intervals (- (last cp*) (last cf-at)))))))
+
+(deftest third-species-counterpoint-test
+  (testing "four quarter notes per whole: downbeats consonant, others may be passing/neighbor"
+    ;; Third species: four CP notes per CF note. Downbeats (every 4th index)
+    ;; must be consonant. Non-downbeat dissonances must be stepwise passing
+    ;; or neighbor tones. Uses shorter CF for solver tractability.
+    (let [cf [0 2 4 5 0] ;; C D E F C — shorter CF for 4:1 ratio
+          n-cf (count cf)
+          n-cp (* 4 n-cf)
+          cp (vec (for [_ (range n-cp)] (i/fresh-int diatonic-semitones)))
+          cf-at (vec (for [t (range n-cp)] (nth cf (quot t 4))))
+          intervals (vec (for [t (range n-cp)]
+                           (i/- (nth cp t) (nth cf-at t))))
+          motions-cp (vec (for [t (range (dec n-cp))]
+                            (i/- (nth cp (inc t)) (nth cp t))))
+          ;; Downbeats consonant
+          downbeat-consonant (apply i/conjunction
+                               (for [t (range 0 n-cp 4)]
+                                 (cp-consonant? (nth intervals t))))
+          ;; Non-downbeat dissonances must be stepwise
+          non-downbeat-passing
+          (apply i/conjunction
+            (for [t (range 1 n-cp)
+                  :when (pos? (mod t 4))
+                  :when (< t (dec n-cp))]
+              (i/when (i/not (cp-consonant? (nth intervals t)))
+                (i/and (cp-stepwise? (nth motions-cp (dec t)))
+                       (cp-stepwise? (nth motions-cp t))))))
+          above (apply i/conjunction
+                  (for [t (range n-cp)] (i/>= (nth cp t) (nth cf-at t))))
+          constraint (i/and downbeat-consonant non-downbeat-passing
+                            (cp-start-end-perfect intervals) above)
+          solution (i/satisfy constraint)
+          cp* (mapv solution cp)]
+      ;; Downbeats consonant
+      (doseq [t (range 0 n-cp 4)]
+        (is (contains? cp-consonant-intervals (- (nth cp* t) (nth cf-at t)))
+            (str "Downbeat " t " not consonant")))
+      ;; Non-downbeat dissonances are stepwise
+      (doseq [t (range 1 (dec n-cp))
+              :when (pos? (mod t 4))]
+        (let [interval (- (nth cp* t) (nth cf-at t))]
+          (when-not (contains? cp-consonant-intervals interval)
+            (is (<= (Math/abs (- (nth cp* t) (nth cp* (dec t)))) 2)
+                (str "Non-stepwise approach at beat " t))
+            (is (<= (Math/abs (- (nth cp* (inc t)) (nth cp* t))) 2)
+                (str "Non-stepwise departure from beat " t)))))
+      ;; Start/end perfect
+      (is (contains? cp-perfect-intervals (- (first cp*) (first cf-at))))
+      (is (contains? cp-perfect-intervals (- (last cp*) (last cf-at)))))))
+
+(deftest fourth-species-counterpoint-test
+  (testing "syncopated counterpoint: suspensions tied across barlines, dissonances resolve down by step"
+    (let [cf cf-melody
+          n-cf (count cf)
+          n-cp (* 2 n-cf)                         ;; 2 half-notes per whole note
+          cp (vec (for [_ (range n-cp)] (i/fresh-int diatonic-semitones)))
+          cf-at (vec (for [t (range n-cp)] (nth cf (quot t 2))))
+          intervals (vec (for [t (range n-cp)]
+                           (i/- (nth cp t) (nth cf-at t))))
+          ;; Ties: weak beat of bar k = strong beat of bar k+1
+          ties (apply i/conjunction
+                 (for [k (range (dec n-cf))]
+                   (i/= (nth cp (inc (* 2 k)))
+                         (nth cp (* 2 (inc k))))))
+          ;; Weak beats (odd indices) must be consonant (preparation)
+          weak-consonant (apply i/conjunction
+                           (for [k (range n-cf)]
+                             (cp-consonant? (nth intervals (inc (* 2 k))))))
+          ;; Strong-beat dissonances must resolve down by step
+          strong-resolution
+          (apply i/conjunction
+            (for [k (range n-cf)
+                  :let [s (* 2 k)
+                        w (inc s)]]
+              (i/when (i/not (cp-consonant? (nth intervals s)))
+                (i/and
+                 (i/> (nth cp s) (nth cp w))
+                 (i/<= (i/- (nth cp s) (nth cp w)) 2)))))
+          above (apply i/conjunction
+                  (for [t (range n-cp)] (i/>= (nth cp t) (nth cf-at t))))
+          constraint (i/and ties weak-consonant strong-resolution
+                            (cp-start-end-perfect intervals) above)
+          solution (i/satisfy constraint)
+          cp* (mapv solution cp)]
+      ;; Verify ties hold
+      (doseq [k (range (dec n-cf))]
+        (is (= (nth cp* (inc (* 2 k)))
+               (nth cp* (* 2 (inc k))))
+            (str "Tie broken between bars " k " and " (inc k))))
+      ;; Weak beats consonant
+      (doseq [k (range n-cf)]
+        (is (contains? cp-consonant-intervals
+                       (- (nth cp* (inc (* 2 k)))
+                          (nth cf-at (inc (* 2 k)))))
+            (str "Weak beat of bar " k " not consonant")))
+      ;; Strong-beat suspensions resolve correctly
+      (doseq [k (range n-cf)]
+        (let [s (* 2 k)
+              w (inc s)
+              interval (- (nth cp* s) (nth cf-at s))]
+          (when-not (contains? cp-consonant-intervals interval)
+            (is (> (nth cp* s) (nth cp* w))
+                (str "Suspension at bar " k " does not resolve downward"))
+            (is (<= (- (nth cp* s) (nth cp* w)) 2)
+                (str "Suspension at bar " k " does not resolve by step")))))
+      ;; Start/end perfect
+      (is (contains? cp-perfect-intervals (- (first cp*) (first cf-at))))
+      (is (contains? cp-perfect-intervals (- (last cp*) (last cf-at)))))))
+
+(deftest fifth-species-counterpoint-test
+  (testing "florid counterpoint: mixed rhythmic values reusing shared consonance/stepwise helpers"
+    (let [cf [0 2 4 5 0]                          ;; short CF for tractability
+          bar-subdivisions [2 4 2 1 1]             ;; halves, quarters, halves, whole, whole
+          ;; Build offsets: which CF bar does each CP note belong to?
+          bar-of (vec (mapcat (fn [bar-idx n-sub]
+                                (repeat n-sub bar-idx))
+                              (range) bar-subdivisions))
+          n-cp (count bar-of)                      ;; 10 notes
+          cp (vec (for [_ (range n-cp)] (i/fresh-int diatonic-semitones)))
+          cf-at (vec (map #(nth cf %) bar-of))
+          intervals (vec (for [t (range n-cp)]
+                           (i/- (nth cp t) (nth cf-at t))))
+          motions-cp (vec (for [t (range (dec n-cp))]
+                            (i/- (nth cp (inc t)) (nth cp t))))
+          ;; Compute downbeat indices: first CP note of each bar
+          downbeat-indices (loop [bar 0 idx 0 acc []]
+                             (if (>= bar (count bar-subdivisions))
+                               acc
+                               (recur (inc bar)
+                                      (+ idx (nth bar-subdivisions bar))
+                                      (conj acc idx))))
+          downbeat-set (set downbeat-indices)
+          ;; Downbeats must be consonant
+          downbeat-consonant
+          (apply i/conjunction
+            (for [t downbeat-indices]
+              (cp-consonant? (nth intervals t))))
+          ;; Non-downbeat dissonances must be stepwise passing tones
+          non-downbeat-passing
+          (apply i/conjunction
+            (for [t (range 1 n-cp)
+                  :when (not (contains? downbeat-set t))
+                  :when (< t (dec n-cp))]
+              (i/when (i/not (cp-consonant? (nth intervals t)))
+                (i/and (cp-stepwise? (nth motions-cp (dec t)))
+                       (cp-stepwise? (nth motions-cp t))))))
+          above (apply i/conjunction
+                  (for [t (range n-cp)] (i/>= (nth cp t) (nth cf-at t))))
+          constraint (i/and downbeat-consonant non-downbeat-passing
+                            (cp-start-end-perfect intervals) above)
+          solution (i/satisfy constraint)
+          cp* (mapv solution cp)]
+      ;; Downbeats consonant
+      (doseq [t downbeat-indices]
+        (is (contains? cp-consonant-intervals (- (nth cp* t) (nth cf-at t)))
+            (str "Downbeat at index " t " not consonant")))
+      ;; Non-downbeat dissonances are stepwise
+      (doseq [t (range 1 (dec n-cp))
+              :when (not (contains? downbeat-set t))]
+        (let [interval (- (nth cp* t) (nth cf-at t))]
+          (when-not (contains? cp-consonant-intervals interval)
+            (is (<= (Math/abs (- (nth cp* t) (nth cp* (dec t)))) 2)
+                (str "Non-stepwise approach at beat " t))
+            (is (<= (Math/abs (- (nth cp* (inc t)) (nth cp* t))) 2)
+                (str "Non-stepwise departure from beat " t)))))
+      ;; Start/end perfect
+      (is (contains? cp-perfect-intervals (- (first cp*) (first cf-at))))
+      (is (contains? cp-perfect-intervals (- (last cp*) (last cf-at)))))))
