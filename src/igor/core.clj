@@ -8,6 +8,7 @@
             [igor.terms.core :as terms]
             [igor.terms.set :as terms.set]
             [igor.terms.introduced :as terms.introduced]
+            [igor.globals :as globals]
             [igor.types :as types]
             [igor.utils.string :refer [>>]]))
 
@@ -33,6 +34,9 @@
    (api/force-type (api/bind domain (fresh)) types/Numeric))
   ([domain id]
    (api/force-type (api/bind domain (fresh id)) types/Numeric)))
+
+(defn fresh-bool []
+  (api/force-type (fresh) types/Bool))
 
 (def bind api/bind)
 
@@ -95,3 +99,7 @@
 (def superset? terms.set/superset?)
 (def forall terms.introduced/forall)
 (def for-set terms.introduced/for-set)
+(def circuit globals/circuit)
+(def subcircuit globals/subcircuit)
+(def dpath globals/dpath)
+(def bounded-dpath globals/bounded-dpath)

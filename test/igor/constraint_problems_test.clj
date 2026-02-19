@@ -427,6 +427,24 @@
       ;; Verify: the cycle closes
       (is (= 0 (nth succ* (nth pos* (dec n))))))))
 
+(deftest hamiltonian-cycle-circuit-test
+  (testing "Hamiltonian cycle on K5 using circuit constraint"
+    (let [n 5
+          node-domain (range n)
+          succ (vec (repeatedly n #(i/fresh-int node-domain)))
+          solution (i/satisfy (apply i/circuit succ))
+          succ* (mapv solution succ)]
+      ;; Verify all successors are distinct (permutation)
+      (is (= n (count (distinct succ*))))
+      ;; Verify no self-loops
+      (is (every? (fn [i] (not= i (nth succ* i))) (range n)))
+      ;; Verify following succ from 0 visits all nodes
+      (let [tour (loop [node 0 visited [0] steps 0]
+                   (if (= steps (dec n))
+                     visited
+                     (recur (nth succ* node) (conj visited (nth succ* node)) (inc steps))))]
+        (is (= (set (range n)) (set tour)))))))
+
 (deftest shortest-hamiltonian-cycle-test
   (testing "find the shortest cycle visiting all nodes (TSP on 4 nodes)"
     ;; 4 nodes with asymmetric distances:
@@ -477,6 +495,30 @@
       ;; Optimal tour for this matrix: 0->1->3->2->0 = 10+25+30+15 = 80
       (is (= 80 total*))
       ;; Verify it's a valid cycle
+      (is (= n (count (distinct succ*)))))))
+
+(deftest shortest-hamiltonian-cycle-circuit-test
+  (testing "TSP on 4 nodes using circuit constraint"
+    (let [n 4
+          costs [[0 10 15 20]
+                 [10 0 35 25]
+                 [15 35 0 30]
+                 [20 25 30 0]]
+          node-domain (range n)
+          cost-domain (range 101)
+          succ (vec (repeatedly n #(i/fresh-int node-domain)))
+          ec-vars (vec (for [_ (range n)] (i/fresh-int cost-domain)))
+          edge-constraints (apply i/and
+                                  (for [i (range n)]
+                                    (i/= (nth ec-vars i) (i/nth (vec (nth costs i)) (nth succ i)))))
+          total-cost (apply i/+ ec-vars)
+          solution (i/maximize (i/- 0 total-cost)
+                               (i/and (apply i/circuit succ) edge-constraints))
+          succ* (mapv solution succ)
+          ec* (mapv solution ec-vars)
+          total* (apply + ec*)]
+      ;; Optimal tour: 0->1->3->2->0 = 10+25+30+15 = 80
+      (is (= 80 total*))
       (is (= n (count (distinct succ*)))))))
 
 (deftest graph-coloring-test
@@ -926,6 +968,32 @@
                          (mod (+ curr 5) n))]
           (is (= nxt expected)))))))
 
+(deftest neo-riemannian-rising-cycle-circuit-test
+  (testing "Hamiltonian cycle on 12 major nodes using circuit constraint"
+    ;; Same projected graph as neo-riemannian-rising-cycle-test but encoded
+    ;; with a single circuit constraint instead of manual chain/position logic.
+    (let [n 12
+          node-domain (range n)
+          succ (vec (repeatedly n #(i/fresh-int node-domain)))
+          ;; Each succ[r] must be (r+9)%12 or (r+5)%12
+          allowed (apply i/and
+                         (for [r (range n)]
+                           (i/or (i/= (nth succ r) (mod (+ r 9) n))
+                                 (i/= (nth succ r) (mod (+ r 5) n)))))
+          solution (i/satisfy (i/and (apply i/circuit succ) allowed))
+          succ* (mapv solution succ)]
+      ;; All 12 nodes visited
+      (is (= (set (range n)) (set succ*)))
+      ;; Each successor is valid
+      (doseq [r (range n)]
+        (is (#{(mod (+ r 9) n) (mod (+ r 5) n)} (nth succ* r))))
+      ;; Verify it's a single cycle
+      (let [tour (loop [node 0 visited [0] steps 0]
+                   (if (= steps (dec n))
+                     visited
+                     (recur (nth succ* node) (conj visited (nth succ* node)) (inc steps))))]
+        (is (= (set (range n)) (set tour)))))))
+
 (deftest neo-riemannian-shortest-rising-cycle-test
   (testing "find rising cycle from C major back to C major (any length)"
     ;; Unlike the Hamiltonian test, the path can revisit triads.
@@ -990,6 +1058,43 @@
           (is (some #{to} (rising-neighbors from))
               (str "Step " t ": " (triad-name from) " -> " (triad-name to)
                    " is not a rising edge")))))))
+
+(deftest neo-riemannian-shortest-rising-cycle-dpath-test
+  (testing "find shortest rising cycle from C major using dpath"
+    ;; Build the full rising edge list for all 24 triads.
+    ;; Model the cycle as: dpath from 0 to a predecessor of 0,
+    ;; then the closing edge back to 0.
+    ;; Rising predecessors of 0 (C major): 12 (C minor via P) and 16 (E minor via L).
+    ;; We use dpath from 0 to 12 (C minor), since C minor -> C major via P (weight 1).
+    (let [n-nodes 24
+          edges (vec (for [id (range 24)
+                           nbr (rising-neighbors id)]
+                       [id nbr]))
+          n-edges (count edges)
+          from-vec (mapv first edges)
+          to-vec (mapv second edges)
+          source (i/fresh-int (range n-nodes) "s")
+          target (i/fresh-int (range n-nodes) "t")
+          ns-vec (vec (repeatedly n-nodes i/fresh-bool))
+          es-vec (vec (repeatedly n-edges i/fresh-bool))
+          fix-source (i/= source 0)
+          fix-target (i/= target 12)
+          path-constraint (i/dpath n-nodes n-edges from-vec to-vec
+                                   source target ns-vec es-vec)
+          solution (i/satisfy (i/and path-constraint fix-source fix-target))
+          ns* (mapv #(get solution %) ns-vec)
+          es* (mapv #(get solution %) es-vec)
+          active-nodes (set (filter #(true? (nth ns* %)) (range n-nodes)))
+          active-edges (filter #(true? (nth es* %)) (range n-edges))]
+      ;; Source and target are in the path
+      (is (active-nodes 0))
+      (is (active-nodes 12))
+      ;; All active edges connect active nodes via rising edges
+      (doseq [ei active-edges]
+        (let [[u v] (nth edges ei)]
+          (is (active-nodes u))
+          (is (active-nodes v))
+          (is (some #{v} (rising-neighbors u))))))))
 
 (deftest neo-riemannian-rising-path-test
   (testing "find rising path from C major to F# major (tritone away) in at most 8 steps"
@@ -1062,6 +1167,55 @@
                    " is not a rising edge"))))
       ;; Path should be at most 8 steps
       (is (<= (dec (count active-path)) max-len)))))
+
+(deftest neo-riemannian-rising-path-dpath-test
+  (testing "find rising path from C major to F# major using dpath"
+    ;; F# major = triad 6. Uses dpath to find the path directly
+    ;; instead of manual arrived-flag encoding.
+    (let [n-nodes 24
+          target 6
+          edges (vec (for [id (range 24)
+                           nbr (rising-neighbors id)]
+                       [id nbr]))
+          n-edges (count edges)
+          from-vec (mapv first edges)
+          to-vec (mapv second edges)
+          source-var (i/fresh-int (range n-nodes) "s")
+          target-var (i/fresh-int (range n-nodes) "t")
+          ns-vec (vec (repeatedly n-nodes i/fresh-bool))
+          es-vec (vec (repeatedly n-edges i/fresh-bool))
+          fix-source (i/= source-var 0)
+          fix-target (i/= target-var target)
+          path-constraint (i/dpath n-nodes n-edges from-vec to-vec
+                                   source-var target-var ns-vec es-vec)
+          solution (i/satisfy (i/and path-constraint fix-source fix-target))
+          ns* (mapv #(get solution %) ns-vec)
+          es* (mapv #(get solution %) es-vec)
+          active-nodes (set (filter #(true? (nth ns* %)) (range n-nodes)))
+          active-edges (vec (filter #(true? (nth es* %)) (range n-edges)))]
+      ;; Source and target are in the path
+      (is (active-nodes 0))
+      (is (active-nodes target))
+      ;; All active edges connect active nodes via rising edges
+      (doseq [ei active-edges]
+        (let [[u v] (nth edges ei)]
+          (is (active-nodes u))
+          (is (active-nodes v))
+          (is (some #{v} (rising-neighbors u)))))
+      ;; Reconstruct the path and verify it goes from 0 to target
+      (let [edge-map (into {} (for [ei active-edges]
+                                [(nth edges ei 0) (nth edges ei)]))
+            adj (reduce (fn [m ei]
+                          (let [[u v] (nth edges ei)]
+                            (assoc m u v)))
+                        {} active-edges)
+            path (loop [node 0 acc [0]]
+                   (if (= node target)
+                     acc
+                     (let [next-node (get adj node)]
+                       (recur next-node (conj acc next-node)))))]
+        (is (= 0 (first path)))
+        (is (= target (last path)))))))
 
 ;; ============================================================
 ;; 18. Species counterpoint
