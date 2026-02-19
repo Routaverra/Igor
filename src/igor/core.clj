@@ -7,7 +7,8 @@
             [igor.terms.core :as terms]
             [igor.terms.set :as terms.set]
             [igor.terms.introduced :as terms.introduced]
-            [igor.graph :as graph]))
+            [igor.graph :as graph]
+            [igor.extensional :as extensional]))
 
 (def fresh api/fresh)
 (def fresh-set api/fresh-set)
@@ -93,3 +94,6 @@
 (def dtree graph/dtree)
 (def weighted-spanning-tree graph/weighted-spanning-tree)
 (def d-weighted-spanning-tree graph/d-weighted-spanning-tree)
+(def table extensional/table)
+(def regular extensional/regular)
+(def cost-regular extensional/cost-regular)

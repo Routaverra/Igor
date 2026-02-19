@@ -364,3 +364,30 @@
     (let [g (graph/digraph [[0 1] [1 0] [2 3] [3 2]])]
       ;; not all nodes reachable from 0
       (is (false? (i/reachable g 0))))))
+
+;; ============================================================
+;; Extensional ground pass-through
+;; ============================================================
+
+(deftest constant-fold-table-test
+  (testing "i/table with ground args folds to boolean"
+    (is (true? (i/table [1 2 3] [[1 2 3] [4 5 6]])))
+    (is (true? (i/table [4 5 6] [[1 2 3] [4 5 6]])))
+    (is (false? (i/table [1 2 4] [[1 2 3] [4 5 6]])))
+    (is (false? (i/table [0 0 0] [[1 2 3] [4 5 6]])))))
+
+(deftest constant-fold-regular-test
+  (testing "i/regular with ground sequence folds to boolean"
+    (let [dfa {:states      2
+               :alphabet    #{0 1}
+               :transitions [{0 0, 1 1}
+                             {0 0, 1 1}]
+               :start       0
+               :accept      #{1}}]
+      ;; accepting sequences
+      (is (true? (i/regular [1] dfa)))
+      (is (true? (i/regular [0 1] dfa)))
+      (is (true? (i/regular [0 0 1] dfa)))
+      ;; rejecting sequences
+      (is (false? (i/regular [0] dfa)))
+      (is (false? (i/regular [1 0] dfa))))))
