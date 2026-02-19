@@ -4,6 +4,7 @@
    variables constrained to the same values (solver evaluation)."
   (:require [clojure.test :refer [deftest is testing]]
             [igor.core :as i]
+            [igor.graph :as graph]
             [igor.utils.test :refer [only-val]]))
 
 ;; Helper: solve for a result decision constrained to equal the term expression,
@@ -339,3 +340,27 @@
     (is (true? (i/and (i/> 5 3) (i/even? 4))))
     ;; (= (mod 10 3) 1) = true
     (is (true? (i/= (i/mod 10 3) 1)))))
+
+;; ============================================================
+;; Graph ground pass-through
+;; ============================================================
+
+(deftest constant-fold-dreachable-test
+  (testing "i/dreachable with ground root folds to boolean"
+    (let [g (graph/digraph [[0 1] [1 2] [2 3]])]
+      ;; all nodes reachable from 0
+      (is (true? (i/dreachable g 0)))
+      ;; node 0 not reachable from 3 (directed)
+      (is (false? (i/dreachable g 3))))))
+
+(deftest constant-fold-reachable-test
+  (testing "i/reachable with ground root folds to boolean"
+    (let [g (graph/digraph [[0 1] [1 0] [1 2] [2 1] [2 3] [3 2]])]
+      ;; all nodes reachable undirected from 0
+      (is (true? (i/reachable g 0)))
+      ;; also reachable from 3
+      (is (true? (i/reachable g 3))))
+    ;; disconnected graph
+    (let [g (graph/digraph [[0 1] [1 0] [2 3] [3 2]])]
+      ;; not all nodes reachable from 0
+      (is (false? (i/reachable g 0))))))

@@ -249,3 +249,30 @@
 
 (def cacheing-validate (memoize protocols/validate))
 (def cacheing-decisions (memoize protocols/decisions))
+
+;; --- Shared decision variable constructors ---
+
+(defn fresh
+  "Mint a fresh decision, optionally with a user-provided identifier."
+  ([]
+   (->Decision (str (gensym))))
+  ([id]
+   {:pre [(string? id)]}
+   (if (re-matches #"[A-Za-z][A-Za-z0-9_]*" id)
+     (->Decision id)
+     (throw (ex-info
+             (>> {:id id}
+                 "Invalid identifier: {{id}}. Identifiers should start with a letter and consist only of letters, numbers, and underscores.")
+             {})))))
+
+(defn fresh-bool []
+  (force-type (fresh) types/Bool))
+
+(defn fresh-int
+  ([domain]
+   (force-type (bind domain (fresh)) types/Numeric))
+  ([domain id]
+   (force-type (bind domain (fresh id)) types/Numeric)))
+
+(defn fresh-set [super]
+  (force-type (bind super (fresh)) types/Set))

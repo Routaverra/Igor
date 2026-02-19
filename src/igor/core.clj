@@ -3,42 +3,16 @@
                              mod rem inc dec even? odd? pos? neg? zero?
                              true? false? not= contains? count max min nth abs])
   (:require [igor.api :as api]
-            [igor.protocols :as protocols]
             [igor.solver :as solver]
             [igor.terms.core :as terms]
             [igor.terms.set :as terms.set]
             [igor.terms.introduced :as terms.introduced]
-            [igor.globals :as globals]
-            [igor.graph :as graph]
-            [igor.types :as types]
-            [igor.utils.string :refer [>>]]))
+            [igor.graph :as graph]))
 
-(defn fresh
-  "Mint a fresh decision."
-  ([]
-   (fresh (str (gensym))))
-  ([id]
-   {:pre [(string? id)]}
-   (if (re-matches #"[A-Za-z][A-Za-z0-9_]*" id)
-     (api/->Decision id)
-     (throw (ex-info
-             (>> {:id id}
-                 "Invalid identifier: {{id}}. Identifiers should start with a letter and consist only of letters, numbers, and underscores.")
-             {})))))
-
-(defn fresh-set [super]
-  (api/force-type (api/bind super (fresh)) types/Set))
-
-(defn fresh-int
-  "Mint a fresh integer decision bounded to the given domain."
-  ([domain]
-   (api/force-type (api/bind domain (fresh)) types/Numeric))
-  ([domain id]
-   (api/force-type (api/bind domain (fresh id)) types/Numeric)))
-
-(defn fresh-bool []
-  (api/force-type (fresh) types/Bool))
-
+(def fresh api/fresh)
+(def fresh-set api/fresh-set)
+(def fresh-int api/fresh-int)
+(def fresh-bool api/fresh-bool)
 (def bind api/bind)
 
 (defn satisfy

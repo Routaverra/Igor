@@ -34,22 +34,16 @@
 ;; Internal helpers
 ;; ============================================================
 
-(defn- fresh-bool []
-  (api/force-type (api/->Decision (str (gensym))) types/Bool))
-
-(defn- fresh-int [domain]
-  (api/force-type (api/bind domain (api/->Decision (str (gensym)))) types/Numeric))
-
 (defn- make-ns-es
   "Create n-nodes bool vars + n-edges bool vars."
   [graph]
-  {:ns-vars (vec (repeatedly (:n-nodes graph) fresh-bool))
-   :es-vars (vec (repeatedly (:n-edges graph) fresh-bool))})
+  {:ns-vars (vec (repeatedly (:n-nodes graph) api/fresh-bool))
+   :es-vars (vec (repeatedly (:n-edges graph) api/fresh-bool))})
 
 (defn- make-es
   "Create just n-edges bool vars (for spanning tree variants)."
   [graph]
-  {:es-vars (vec (repeatedly (:n-edges graph) fresh-bool))})
+  {:es-vars (vec (repeatedly (:n-edges graph) api/fresh-bool))})
 
 (defn- translate-1idx
   "Translate a value to 1-indexed MiniZinc. If ground integer, increment.
@@ -120,125 +114,6 @@
         (if (visited node)
           (recur queue visited)
           (recur (into queue (get adj node [])) (conj visited node)))))))
-
-(defn- dag?
-  "Kahn's algorithm: returns true if graph is a DAG."
-  [graph]
-  (let [adj (adjacency-list graph)
-        nodes (:nodes graph)
-        in-degree (reduce (fn [m i] (update m (nth (:to-arr graph) i) (fnil inc 0)))
-                          (zipmap nodes (repeat 0))
-                          (range (:n-edges graph)))]
-    (loop [queue (vec (filter #(zero? (get in-degree %)) nodes))
-           remaining in-degree
-           count 0]
-      (if (empty? queue)
-        (= count (:n-nodes graph))
-        (let [node (first queue)
-              queue (subvec queue 1)
-              neighbors (get adj node [])
-              remaining' (reduce (fn [m n] (update m n dec)) remaining neighbors)
-              new-zeros (filter #(zero? (get remaining' %)) neighbors)]
-          (recur (into queue new-zeros) remaining' (inc count)))))))
-
-(defn- connected?
-  "Check if undirected graph is connected."
-  [graph]
-  (if (empty? (:nodes graph))
-    true
-    (let [adj (undirected-adjacency-list graph)
-          reached (bfs-reachable adj (first (:nodes graph)))]
-      (= (:nodes graph) (into (sorted-set) reached)))))
-
-(defn- strongly-connected?
-  "Check if directed graph is strongly connected (BFS forward + backward)."
-  [graph]
-  (if (empty? (:nodes graph))
-    true
-    (let [start (first (:nodes graph))
-          fwd-adj (adjacency-list graph)
-          ;; Build reverse adjacency
-          rev-adj (reduce (fn [m i]
-                            (update m (nth (:to-arr graph) i)
-                                    (fnil conj []) (nth (:from-arr graph) i)))
-                          {} (range (:n-edges graph)))
-          fwd-reached (dfs-reachable fwd-adj start)
-          rev-reached (dfs-reachable rev-adj start)]
-      (and (= (:nodes graph) (into (sorted-set) fwd-reached))
-           (= (:nodes graph) (into (sorted-set) rev-reached))))))
-
-(defn- has-directed-path?
-  "DFS check: is target reachable from source via directed edges?"
-  [graph source target]
-  (let [adj (adjacency-list graph)]
-    (contains? (dfs-reachable adj source) target)))
-
-(defn- has-undirected-path?
-  "BFS check: is target reachable from source via undirected edges?"
-  [graph source target]
-  (let [adj (undirected-adjacency-list graph)]
-    (contains? (bfs-reachable adj source) target)))
-
-(defn- is-tree?
-  "Check if undirected graph forms a tree: connected and n-1 edges."
-  [graph]
-  (and (= (:n-edges graph) (dec (:n-nodes graph)))
-       (connected? graph)))
-
-(defn- is-dtree?
-  "Check if directed graph forms an arborescence from root."
-  [graph root]
-  (let [adj (adjacency-list graph)
-        reached (dfs-reachable adj root)]
-    (and (= (:nodes graph) (into (sorted-set) reached))
-         (= (:n-edges graph) (dec (:n-nodes graph))))))
-
-(defn- has-bounded-dpath?
-  "Check if a directed path from source to target exists with total weight <= bound."
-  [graph source target bound]
-  (let [adj (reduce (fn [m i]
-                      (update m (nth (:from-arr graph) i)
-                              (fnil conj [])
-                              [(nth (:to-arr graph) i) (nth (:weights graph) i)]))
-                    {} (range (:n-edges graph)))]
-    ;; Simple DFS with weight tracking
-    (loop [stack [[source 0 #{source}]]]
-      (if (empty? stack)
-        false
-        (let [[node cost visited] (peek stack)
-              stack (pop stack)]
-          (if (= node target)
-            (<= cost bound)
-            (let [nbrs (for [[nbr w] (get adj node [])
-                             :when (not (visited nbr))
-                             :when (<= (+ cost w) bound)]
-                          [nbr (+ cost w) (conj visited nbr)])]
-              (recur (into stack nbrs)))))))))
-
-(defn- has-bounded-path?
-  "Check if an undirected path from source to target exists with total weight <= bound."
-  [graph source target bound]
-  ;; Build undirected weighted adjacency
-  (let [adj (reduce (fn [m i]
-                      (let [f (nth (:from-arr graph) i)
-                            t (nth (:to-arr graph) i)
-                            w (nth (:weights graph) i)]
-                        (-> m
-                            (update f (fnil conj []) [t w])
-                            (update t (fnil conj []) [f w]))))
-                    {} (range (:n-edges graph)))]
-    (loop [stack [[source 0 #{source}]]]
-      (if (empty? stack)
-        false
-        (let [[node cost visited] (peek stack)
-              stack (pop stack)]
-          (if (= node target)
-            (<= cost bound)
-            (let [nbrs (for [[nbr w] (get adj node [])
-                             :when (not (visited nbr))
-                             :when (<= (+ cost w) bound)]
-                          [nbr (+ cost w) (conj visited nbr)])]
-              (recur (into stack nbrs)))))))))
 
 ;; ============================================================
 ;; Constraint term records
@@ -735,7 +610,7 @@
         n (:n-nodes g)
         succ (vec (for [node nodes]
                     (let [out-neighbors (set (get adj node []))]
-                      (fresh-int out-neighbors))))
+                      (api/fresh-int out-neighbors))))
         argv (vec succ)]
     (api/cacheing-validate
      (->TermGraphCircuit argv g succ))))
@@ -750,7 +625,7 @@
         succ (vec (for [node nodes]
                     (let [out-neighbors (set (get adj node []))
                           domain (conj out-neighbors node)]
-                      (fresh-int domain))))
+                      (api/fresh-int domain))))
         argv (vec succ)]
     (api/cacheing-validate
      (->TermGraphSubCircuit argv g succ))))
