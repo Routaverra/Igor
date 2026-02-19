@@ -3,7 +3,7 @@
             [igor.core :as i]
             [igor.utils.test :refer [only-val throws?]]))
 
-(deftest conjunction-does-not-stack-overflow-test
+(deftest and-does-not-stack-overflow-test
   (is (= false
          (throws?
           (let [n 15
@@ -16,7 +16,7 @@
                     (i/= a x)
                     (i/= b y)
                     (i/= (i/+ a b) (clojure.core/+ x y))))
-                 (apply i/conjunction)))))))
+                 (apply i/and)))))))
 
 (deftest unbound-numeric-throws-test
   (testing "unbound numeric decision throws at solve time"

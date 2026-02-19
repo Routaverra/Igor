@@ -398,7 +398,7 @@
           idx (i/fresh-int (range 4))
           result (i/fresh-int int-domain)
           solution (i/satisfy
-                    (apply i/conjunction
+                    (apply i/and
                            (i/= idx 2)
                            (i/= result (i/nth elems idx))
                            (i/= (nth elems 2) 77)
@@ -419,5 +419,5 @@
                    (i/= b y)
                    (i/= (clojure.core/rem x y) (i/rem a b))
                    (i/= (clojure.core/mod x y) (i/mod a b))))
-                (apply i/conjunction)
+                (apply i/and)
                 (i/satisfy)))))))

@@ -11,7 +11,7 @@
                              (i/when (i/contains? set-decision (i/mod (i/+ a 1) 12))
                                (i/not (i/contains? set-decision (i/mod (i/+ a 2) 12)))))))
           constraint (apply
-                      i/conjunction
+                      i/and
                       (concat
                        (->> mesos
                             (partition 2 1)

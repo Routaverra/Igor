@@ -24,7 +24,7 @@
           all-diff (->> (for [i (range (count digits))
                               j (range (inc i) (count digits))]
                           (i/not= (nth digits i) (nth digits j)))
-                        (apply i/conjunction))
+                        (apply i/and))
           constraint (i/and
                       all-diff
                       (i/= (i/+ send more) money)
@@ -52,7 +52,7 @@
           all-diff (->> (for [i (range 9)
                               j (range (inc i) 9)]
                           (i/not= (nth cells i) (nth cells j)))
-                        (apply i/conjunction))
+                        (apply i/and))
           ;; rows, cols, diags all equal magic-sum
           sums (i/and
                 (i/= magic-sum (i/+ a b c))
@@ -80,16 +80,16 @@
 ;; 2. Disjunction and or
 ;; ============================================================
 
-(deftest disjunction-test
+(deftest or-test
   (testing "or selects one of multiple alternatives"
     (let [x (i/fresh-int (range 50))]
       (is (contains?
            #{3 7}
            (get (i/satisfy (i/or (i/= x 3) (i/= x 7))) x)))))
 
-  (testing "disjunction of many constraints"
+  (testing "or of many constraints"
     (let [x (i/fresh-int (range 50))
-          constraint (apply i/disjunction
+          constraint (apply i/or
                             (map (fn [v] (i/= x v)) [10 20 30]))]
       (is (contains? #{10 20 30}
                      (get (i/satisfy constraint) x))))))
@@ -157,7 +157,7 @@
           col-diff (->> (for [i (range n)
                               j (range (inc i) n)]
                           (i/not= (nth queens i) (nth queens j)))
-                        (apply i/conjunction))
+                        (apply i/and))
           ;; no two queens on same diagonal
           diag-diff (->> (for [i (range n)
                                j (range (inc i) n)
@@ -165,7 +165,7 @@
                            (i/and
                             (i/not= (i/+ (nth queens i) di) (nth queens j))
                             (i/not= (i/- (nth queens i) di) (nth queens j))))
-                         (apply i/conjunction))
+                         (apply i/and))
           solution (i/satisfy (i/and col-diff diag-diff))
           cols (mapv solution queens)]
       ;; verify: all columns distinct
@@ -435,16 +435,16 @@
           all-diff (->> (for [i (range n)
                               j (range (inc i) n)]
                           (i/not= (nth succ i) (nth succ j)))
-                        (apply i/conjunction))
+                        (apply i/and))
           ;; No self-loops: succ[i] != i
           no-self (->> (for [i (range n)]
                          (i/not= (nth succ i) i))
-                       (apply i/conjunction))
+                       (apply i/and))
           ;; Follow the chain from node 0 and verify we visit all nodes
           ;; and return to 0 after exactly n steps.
           ;; pos[k] = the node at position k in the tour starting from 0.
           pos (vec (repeatedly n #(i/fresh-int node-domain)))
-          chain (apply i/conjunction
+          chain (apply i/and
                        (i/= (nth pos 0) 0) ;; start at node 0
                        ;; pos[k+1] = succ[pos[k]]
                        (for [k (range (dec n))]
@@ -456,7 +456,7 @@
           pos-diff (->> (for [i (range n)
                               j (range (inc i) n)]
                           (i/not= (nth pos i) (nth pos j)))
-                        (apply i/conjunction))
+                        (apply i/and))
           solution (i/satisfy (i/and all-diff no-self chain return-to-start pos-diff))
           succ* (mapv solution succ)
           pos* (mapv solution pos)]
@@ -488,11 +488,11 @@
           ;; all successors distinct
           all-diff (->> (for [i (range n) j (range (inc i) n)]
                           (i/not= (nth succ i) (nth succ j)))
-                        (apply i/conjunction))
+                        (apply i/and))
           ;; no self-loops
           no-self (->> (for [i (range n)]
                          (i/not= (nth succ i) i))
-                       (apply i/conjunction))
+                       (apply i/and))
           ;; edge-cost[i] = cost from i to succ[i]
           edge-costs (vec (for [i (range n)]
                             (let [ec (i/fresh-int cost-domain)]
@@ -500,13 +500,13 @@
                               ;; Use i/nth to index into the cost row for node i
                               (i/= ec (i/nth (vec (nth costs i)) (nth succ i))))))
           ec-vars (vec (for [i (range n)] (i/fresh-int cost-domain)))
-          edge-constraints (apply i/conjunction
+          edge-constraints (apply i/and
                                   (for [i (range n)]
                                     (i/= (nth ec-vars i) (i/nth (vec (nth costs i)) (nth succ i)))))
           total-cost (apply i/+ ec-vars)
           ;; Chain connectivity: pos[k] = node at position k
           pos (vec (repeatedly n #(i/fresh-int node-domain)))
-          chain (apply i/conjunction
+          chain (apply i/and
                        (i/= (nth pos 0) 0)
                        (for [k (range (dec n))]
                          (i/= (nth pos (inc k))
@@ -514,7 +514,7 @@
           return-to-start (i/= (i/nth (vec succ) (nth pos (dec n))) 0)
           pos-diff (->> (for [i (range n) j (range (inc i) n)]
                           (i/not= (nth pos i) (nth pos j)))
-                        (apply i/conjunction))
+                        (apply i/and))
           constraint (i/and all-diff no-self edge-constraints chain return-to-start pos-diff)
           ;; minimize total cost = maximize negative total cost
           solution (i/maximize (i/- 0 total-cost) constraint)
@@ -538,7 +538,7 @@
           ;; adjacent nodes must have different colors
           edge-constraints (->> edges
                                 (map (fn [[u v]] (i/not= (nth colors u) (nth colors v))))
-                                (apply i/conjunction))
+                                (apply i/and))
           solution (i/satisfy edge-constraints)
           colors* (mapv solution colors)]
       ;; Verify no adjacent pair shares a color
@@ -564,7 +564,7 @@
           ;; all positions distinct
           all-diff (->> (for [i (range n) j (range (inc i) n)]
                           (i/not= (nth pos i) (nth pos j)))
-                        (apply i/conjunction))
+                        (apply i/and))
           ;; completion time of job i = sum of processing times of all jobs
           ;; scheduled at positions <= pos[i].
           ;; We use: for each job i, the completion time is bounded by:
@@ -588,10 +588,10 @@
                               ;; if pos[i] = k then job-at[k] = i
                               (i/when (i/= (nth pos i) k)
                                 (i/= (nth job-at k) i)))
-                            (apply i/conjunction))
+                            (apply i/and))
           job-at-diff (->> (for [i (range n) j (range (inc i) n)]
                              (i/not= (nth job-at i) (nth job-at j)))
-                           (apply i/conjunction))
+                           (apply i/and))
           ;; finish[k] = sum of proc-times[job-at[0..k]]
           ;; Use cumulative approach: finish at position k = sum(i=0..k, proc-time[job-at[i]])
           ;; For each position k, the job there must finish by its deadline.
@@ -601,13 +601,13 @@
           ;; finish[0] = proc-time[job-at[0]]
           finish-0 (i/= (nth finish-vars 0) (i/nth (vec proc-times) (nth job-at 0)))
           ;; finish[k] = finish[k-1] + proc-time[job-at[k]]
-          finish-chain (apply i/conjunction
+          finish-chain (apply i/and
                               (for [k (range 1 n)]
                                 (i/= (nth finish-vars k)
                                       (i/+ (nth finish-vars (dec k))
                                             (i/nth (vec proc-times) (nth job-at k))))))
           ;; deadline constraint: finish[k] <= deadline[job-at[k]]
-          deadline-constraints (apply i/conjunction
+          deadline-constraints (apply i/and
                                       (for [k (range n)]
                                         (i/<= (nth finish-vars k)
                                                (i/nth (vec deadlines) (nth job-at k)))))
@@ -643,11 +643,11 @@
                                                  (for [t (range n-tasks)]
                                                    (i/if (i/= (nth assignment t) w) 1 0)))]
                            (i/= task-count 2)))
-                       (apply i/conjunction))
+                       (apply i/and))
           ;; cost of each task
           task-costs (vec (for [t (range n-tasks)]
                            (i/fresh-int (range 20))))
-          cost-links (apply i/conjunction
+          cost-links (apply i/and
                             (for [t (range n-tasks)]
                               (i/= (nth task-costs t)
                                     (i/nth (vec (nth costs t)) (nth assignment t)))))
@@ -679,13 +679,13 @@
                               i (range n)
                               j (range (inc i) n)]
                           (i/not= (get-in cells [r i]) (get-in cells [r j])))
-                        (apply i/conjunction))
+                        (apply i/and))
           ;; column constraints: all different in each column
           col-diff (->> (for [c (range n)
                               i (range n)
                               j (range (inc i) n)]
                           (i/not= (get-in cells [i c]) (get-in cells [j c])))
-                        (apply i/conjunction))
+                        (apply i/and))
           solution (i/satisfy (i/and row-diff col-diff))
           grid (vec (for [r (range n)]
                       (vec (for [c (range n)]
@@ -707,11 +707,11 @@
           ;; p is a permutation: all different
           all-diff (->> (for [i (range n) j (range (inc i) n)]
                           (i/not= (nth p i) (nth p j)))
-                        (apply i/conjunction))
+                        (apply i/and))
           ;; involution: p[p[i]] = i for all i
           involution (->> (for [i (range n)]
                             (i/= (i/nth p (nth p i)) i))
-                          (apply i/conjunction))
+                          (apply i/and))
           solution (i/satisfy (i/and all-diff involution))
           p* (mapv solution p)]
       ;; Verify it's a permutation
@@ -752,7 +752,7 @@
                                   (nth sizes item)
                                   0)))
                         capacity))
-               (apply i/conjunction))
+               (apply i/and))
           solution (i/satisfy capacity-constraints)
           bins* (mapv solution bins)]
       ;; Verify capacity constraint for each bin
@@ -784,15 +784,15 @@
           state (vec (for [_ (range (inc max-steps))]
                        (vec (repeatedly 4 #(i/fresh-int binary)))))
           ;; Initial state: all on left bank (0)
-          init (apply i/conjunction
+          init (apply i/and
                       (for [e (range 4)]
                         (i/= (get-in state [0 e]) 0)))
           ;; Final state: all on right bank (1)
-          final-state (apply i/conjunction
+          final-state (apply i/and
                              (for [e (range 4)]
                                (i/= (get-in state [max-steps e]) 1)))
           ;; Safety constraints at each step (except maybe the final step which is valid)
-          safety (apply i/conjunction
+          safety (apply i/and
                         (for [t (range (inc max-steps))]
                           (let [f (get-in state [t 0])
                                 w (get-in state [t 1])
@@ -805,7 +805,7 @@
                              (i/or (i/= f g) (i/not= g c))))))
           ;; Transition constraints between steps
           transitions
-          (apply i/conjunction
+          (apply i/and
                  (for [t (range max-steps)]
                    (let [f0 (get-in state [t 0]) f1 (get-in state [(inc t) 0])
                          w0 (get-in state [t 1]) w1 (get-in state [(inc t) 1])
@@ -971,14 +971,14 @@
                             (i/nth [(mod (+ r 9) n) (mod (+ r 5) n)] (nth choice r))))
           pos (vec (repeatedly n #(i/fresh-int node-domain)))
           start (i/= (nth pos 0) 0)
-          chain (apply i/conjunction
+          chain (apply i/and
                        (for [k (range (dec n))]
                          (i/= (nth pos (inc k))
                                (i/nth (vec next-major) (nth pos k)))))
           close (i/= (i/nth (vec next-major) (nth pos (dec n))) 0)
           all-diff (->> (for [i (range n) j (range (inc i) n)]
                           (i/not= (nth pos i) (nth pos j)))
-                        (apply i/conjunction))
+                        (apply i/and))
           solution (i/satisfy (i/and start chain close all-diff))
           pos* (mapv solution pos)
           choice* (mapv solution choice)]
@@ -1010,7 +1010,7 @@
           arrived (vec (repeatedly (inc max-len) #(i/fresh-int (range 2))))
           init-arrived (i/and (i/= (nth arrived 0) 0) (i/= (nth arrived 1) 0))
           arrive-chain
-          (apply i/conjunction
+          (apply i/and
                  (for [t (range 2 (inc max-len))]
                    (i/and
                     (i/when (i/= (nth arrived (dec t)) 1) (i/= (nth arrived t) 1))
@@ -1022,7 +1022,7 @@
           ;; transitions: follow rising edges before arrival, self-loop at 0 after
           step-choice (vec (repeatedly max-len #(i/fresh-int (range 2))))
           transitions
-          (apply i/conjunction
+          (apply i/and
                  (for [t (range max-len)]
                    (let [nbr0 (i/nth nbr-col0 (nth path t))
                          nbr1 (i/nth nbr-col1 (nth path t))]
@@ -1076,7 +1076,7 @@
           init-arrived (i/= (nth arrived 0) 0)
           ;; arrived[t] = 1 if path[t] = target or arrived[t-1] = 1
           arrive-chain
-          (apply i/conjunction
+          (apply i/and
                  (for [t (range 1 (inc max-len))]
                    (i/and
                     ;; if already arrived, stay arrived
@@ -1097,7 +1097,7 @@
           nbr-col0 (mapv #(nth % 0) padded-adj)
           nbr-col1 (mapv #(nth % 1) padded-adj)
           transitions
-          (apply i/conjunction
+          (apply i/and
                  (for [t (range max-len)]
                    (let [nbr0 (i/nth nbr-col0 (nth path t))
                          nbr1 (i/nth nbr-col1 (nth path t))]
@@ -1196,7 +1196,7 @@
    motion. `cf-motions` is a vector of concrete integers (CF melodic
    intervals), allowing Clojure-level branching."
   [intervals motions-cp cf-motions]
-  (apply i/conjunction
+  (apply i/and
     (for [t (range (count motions-cp))
           :let [cf-m (nth cf-motions t)]]
       ;; When the next interval is perfect, the CP must not move
@@ -1232,9 +1232,9 @@
           cf-motions (vec (for [t (range (dec n))]
                             (- (nth cf (inc t)) (nth cf t))))
           ;; All intervals consonant
-          all-consonant (apply i/conjunction (map cp-consonant? intervals))
+          all-consonant (apply i/and (map cp-consonant? intervals))
           ;; CP above CF
-          above (apply i/conjunction
+          above (apply i/and
                   (for [t (range n)] (i/>= (nth cp t) (nth cf t))))
           constraint (i/and all-consonant
                             (cp-start-end-perfect intervals)
@@ -1283,17 +1283,17 @@
           motions-cp (vec (for [t (range (dec n-cp))]
                             (i/- (nth cp (inc t)) (nth cp t))))
           ;; Strong beats consonant
-          strong-consonant (apply i/conjunction
+          strong-consonant (apply i/and
                              (for [t (range 0 n-cp 2)]
                                (cp-consonant? (nth intervals t))))
           ;; Weak-beat dissonances must be passing tones (stepwise in and out)
-          weak-passing (apply i/conjunction
+          weak-passing (apply i/and
                          (for [t (range 1 (dec n-cp) 2)]
                            (i/when (i/not (cp-consonant? (nth intervals t)))
                              (i/and (cp-stepwise? (nth motions-cp (dec t)))
                                     (cp-stepwise? (nth motions-cp t))))))
           ;; CP above CF
-          above (apply i/conjunction
+          above (apply i/and
                   (for [t (range n-cp)] (i/>= (nth cp t) (nth cf-at t))))
           constraint (i/and strong-consonant weak-passing
                             (cp-start-end-perfect intervals) above)
@@ -1330,19 +1330,19 @@
           motions-cp (vec (for [t (range (dec n-cp))]
                             (i/- (nth cp (inc t)) (nth cp t))))
           ;; Downbeats consonant
-          downbeat-consonant (apply i/conjunction
+          downbeat-consonant (apply i/and
                                (for [t (range 0 n-cp 4)]
                                  (cp-consonant? (nth intervals t))))
           ;; Non-downbeat dissonances must be stepwise
           non-downbeat-passing
-          (apply i/conjunction
+          (apply i/and
             (for [t (range 1 n-cp)
                   :when (pos? (mod t 4))
                   :when (< t (dec n-cp))]
               (i/when (i/not (cp-consonant? (nth intervals t)))
                 (i/and (cp-stepwise? (nth motions-cp (dec t)))
                        (cp-stepwise? (nth motions-cp t))))))
-          above (apply i/conjunction
+          above (apply i/and
                   (for [t (range n-cp)] (i/>= (nth cp t) (nth cf-at t))))
           constraint (i/and downbeat-consonant non-downbeat-passing
                             (cp-start-end-perfect intervals) above)
@@ -1375,17 +1375,17 @@
           intervals (vec (for [t (range n-cp)]
                            (i/- (nth cp t) (nth cf-at t))))
           ;; Ties: weak beat of bar k = strong beat of bar k+1
-          ties (apply i/conjunction
+          ties (apply i/and
                  (for [k (range (dec n-cf))]
                    (i/= (nth cp (inc (* 2 k)))
                          (nth cp (* 2 (inc k))))))
           ;; Weak beats (odd indices) must be consonant (preparation)
-          weak-consonant (apply i/conjunction
+          weak-consonant (apply i/and
                            (for [k (range n-cf)]
                              (cp-consonant? (nth intervals (inc (* 2 k))))))
           ;; Strong-beat dissonances must resolve down by step
           strong-resolution
-          (apply i/conjunction
+          (apply i/and
             (for [k (range n-cf)
                   :let [s (* 2 k)
                         w (inc s)]]
@@ -1393,7 +1393,7 @@
                 (i/and
                  (i/> (nth cp s) (nth cp w))
                  (i/<= (i/- (nth cp s) (nth cp w)) 2)))))
-          above (apply i/conjunction
+          above (apply i/and
                   (for [t (range n-cp)] (i/>= (nth cp t) (nth cf-at t))))
           constraint (i/and ties weak-consonant strong-resolution
                             (cp-start-end-perfect intervals) above)
@@ -1449,19 +1449,19 @@
           downbeat-set (set downbeat-indices)
           ;; Downbeats must be consonant
           downbeat-consonant
-          (apply i/conjunction
+          (apply i/and
             (for [t downbeat-indices]
               (cp-consonant? (nth intervals t))))
           ;; Non-downbeat dissonances must be stepwise passing tones
           non-downbeat-passing
-          (apply i/conjunction
+          (apply i/and
             (for [t (range 1 n-cp)
                   :when (not (contains? downbeat-set t))
                   :when (< t (dec n-cp))]
               (i/when (i/not (cp-consonant? (nth intervals t)))
                 (i/and (cp-stepwise? (nth motions-cp (dec t)))
                        (cp-stepwise? (nth motions-cp t))))))
-          above (apply i/conjunction
+          above (apply i/and
                   (for [t (range n-cp)] (i/>= (nth cp t) (nth cf-at t))))
           constraint (i/and downbeat-consonant non-downbeat-passing
                             (cp-start-end-perfect intervals) above)

@@ -11,7 +11,7 @@
          greater-than less-than gte lte and* or* not* when*
          iff cond* contains?* count* max* min* nth*
          even?* odd* pos?* neg?* zero?* true?* false?*
-         modulo remainder conjunction disjunction
+         modulo remainder
          translate-comparator)
 
 (defn translation-error! [self]
@@ -157,8 +157,6 @@
                      (equals (first argv) false))))
 
 (defrecord TermAnd [argv]
-  protocols/IExpand
-  (expand [self] (apply conjunction (:argv self)))
   protocols/IExpress
   (write [_self] (apply list 'and (map protocols/write argv)))
   (codomain [self] {types/Bool self})
@@ -171,8 +169,6 @@
 (defn conjunctive? [x] (clojure.core/= (type x) TermAnd))
 
 (defrecord TermOr [argv]
-  protocols/IExpand
-  (expand [self] (apply disjunction (:argv self)))
   protocols/IExpress
   (write [_self] (apply list 'or (map protocols/write argv)))
   (codomain [self] {types/Bool self})
@@ -523,21 +519,6 @@
     (->> (:argv self)
          (partition 2 1)
          (map (fn [[a b]] (constructor-fn a b)))
-         (apply conjunction)
+         (apply and*)
          protocols/translate)))
 
-;; --- conjunction/disjunction (moved from api) ---
-
-(defn conjunction [& args]
-  (loop [expr (first args)
-         more (rest args)]
-    (if (seq more)
-      (recur (and* expr (first more)) (rest more))
-      expr)))
-
-(defn disjunction [& args]
-  (loop [expr (first args)
-         more (rest args)]
-    (if (seq more)
-      (recur (or* expr (first more)) (rest more))
-      expr)))

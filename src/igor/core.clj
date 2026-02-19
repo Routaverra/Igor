@@ -93,5 +93,3 @@
 (def superset? terms.set/superset?)
 (def forall terms.introduced/forall)
 (def for-set terms.introduced/for-set)
-(def conjunction terms/conjunction)
-(def disjunction terms/disjunction)

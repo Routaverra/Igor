@@ -8,7 +8,7 @@ Igor-clj is the canonical reference SDK for Igor, a functional constraint progra
 - **Flat constraint models**: arithmetic, comparison, logical connectives, conditional branching, quantifiers over sets
 - **Operator shadowing**: `igor.core` shadows `clojure.core` operators (`+`, `-`, `*`, `=`, `<`, `>`, etc.) so constraint expressions read like ordinary Clojure
 - **Two solve modes**: `satisfy` (find any solution) and `maximize` (optimize an objective)
-- **Composable terms**: all constraint expressions are immutable values that compose via `and`, `or`, `conjunction`, `disjunction`
+- **Composable terms**: all constraint expressions are immutable values that compose via `and`, `or`
 - **Variable-index access**: `nth` enables indexed lookup into a vector of expressions using a decision variable as the index, expanding to a `cond` chain at solve time
 
 ### Problem coverage
@@ -76,7 +76,7 @@ Constraints over these structures would use the same vocabulary as Clojure data 
 
 ```clojure
 ;; "all x-coordinates are distinct"
-(apply i/conjunction
+(apply i/and
   (for [i (range n) j (range (inc i) n)]
     (i/not= (get-in points [i :x])
             (get-in points [j :x]))))
