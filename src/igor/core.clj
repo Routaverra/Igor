@@ -25,7 +25,7 @@
              {})))))
 
 (defn fresh-set [super]
-  (api/bind super (fresh)))
+  (api/force-type (api/bind super (fresh)) types/Set))
 
 (defn fresh-int
   "Mint a fresh integer decision bounded to the given domain."

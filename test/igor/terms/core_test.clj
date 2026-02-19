@@ -241,6 +241,15 @@
     (is (= (count types/all-decision-types)
            (count (only-val (protocols/decisions (i/= (i/fresh) (i/fresh)))))))))
 
+(deftest ambiguous-type-test
+  (testing "satisfy throws when a bare fresh is used in both numeric and set contexts"
+    (let [x (i/bind (range 5) (i/fresh))]
+      (is (throws?
+           (i/satisfy
+            (i/and
+             (i/= (i/+ x 1) 3)
+             (i/= (i/intersection x #{1 2}) #{1}))))))))
+
 (deftest not=-test
   (testing "not="
     (is (clojure.core/not= 1 (only-val (i/satisfy (i/not= (i/fresh-int int-domain) 1)))))
