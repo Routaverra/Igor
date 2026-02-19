@@ -9,6 +9,7 @@
             [igor.terms.set :as terms.set]
             [igor.terms.introduced :as terms.introduced]
             [igor.globals :as globals]
+            [igor.graph :as graph]
             [igor.types :as types]
             [igor.utils.string :refer [>>]]))
 
@@ -99,7 +100,22 @@
 (def superset? terms.set/superset?)
 (def forall terms.introduced/forall)
 (def for-set terms.introduced/for-set)
-(def circuit globals/circuit)
-(def subcircuit globals/subcircuit)
-(def dpath globals/dpath)
-(def bounded-dpath globals/bounded-dpath)
+(def digraph graph/digraph)
+(def active-nodes graph/active-nodes)
+(def active-edges graph/active-edges)
+(def circuit graph/circuit)
+(def subcircuit graph/subcircuit)
+(def subgraph graph/subgraph)
+(def path graph/path)
+(def dpath graph/dpath)
+(def bounded-path graph/bounded-path)
+(def bounded-dpath graph/bounded-dpath)
+(def reachable graph/reachable)
+(def dreachable graph/dreachable)
+(def connected graph/connected)
+(def dconnected graph/dconnected)
+(def dag graph/dag)
+(def tree graph/tree)
+(def dtree graph/dtree)
+(def weighted-spanning-tree graph/weighted-spanning-tree)
+(def d-weighted-spanning-tree graph/d-weighted-spanning-tree)
