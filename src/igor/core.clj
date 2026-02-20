@@ -8,7 +8,8 @@
             [igor.terms.set :as terms.set]
             [igor.terms.introduced :as terms.introduced]
             [igor.graph :as graph]
-            [igor.extensional :as extensional]))
+            [igor.extensional :as extensional]
+            [igor.notation :as notation]))
 
 (def fresh api/fresh)
 (def fresh-set api/fresh-set)
@@ -97,3 +98,6 @@
 (def table extensional/table)
 (def regular extensional/regular)
 (def cost-regular extensional/cost-regular)
+(def as notation/as)
+(def render-notation notation/render-notation)
+(def render-problem notation/render-problem)
