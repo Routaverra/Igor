@@ -7,7 +7,8 @@
   (decisions [self])
   (translate [self])
   (validate [self])
-  (bindings [self]))
+  (bindings [self])
+  (evaluate [self solution]))
 
 (defprotocol IExpand
   (expand [self]))

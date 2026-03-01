@@ -20,7 +20,9 @@
   (decisions [_self] (api/cacheing-decisions (first argv)))
   (bindings [_self] (protocols/bindings (first argv)))
   (validate [_self] (api/cacheing-validate (first argv)))
-  (translate [_self] (protocols/translate (first argv))))
+  (translate [_self] (protocols/translate (first argv)))
+
+  (evaluate [_self solution] (api/eval-arg (first argv) solution)))
 
 (defn as
   "Wrap an expression with a name for notation rendering.

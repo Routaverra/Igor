@@ -29,7 +29,13 @@
                      {:local-decision (protocols/translate (first argv))
                       :set-expr (protocols/translate (second argv))
                       :constraint-expr (protocols/translate (last argv))}
-                     "( forall ( {{local-decision}} in {{set-expr}} )( {{constraint-expr}} ) )")))
+                     "( forall ( {{local-decision}} in {{set-expr}} )( {{constraint-expr}} ) )"))
+  (evaluate [self solution]
+    (let [[local-decision set-expr constraint-expr] argv
+          s (api/eval-arg set-expr solution)]
+      (every? (fn [elem]
+                (api/eval-arg constraint-expr (assoc solution local-decision elem)))
+              s))))
 
 (defrecord TermForSet [bind-sym argv]
   protocols/IExpress
@@ -56,7 +62,14 @@
                      {:local-decision (protocols/translate (first argv))
                       :set-expr (protocols/translate (second argv))
                       :generator-expr (protocols/translate (last argv))}
-                     "{ {{generator-expr}} | {{local-decision}} in {{set-expr}} }")))
+                     "{ {{generator-expr}} | {{local-decision}} in {{set-expr}} }"))
+  (evaluate [self solution]
+    (let [[local-decision set-expr generator-expr] argv
+          s (api/eval-arg set-expr solution)]
+      (into (sorted-set)
+            (map (fn [elem]
+                   (api/eval-arg generator-expr (assoc solution local-decision elem)))
+                 s)))))
 
 ;; --- Constructor functions ---
 

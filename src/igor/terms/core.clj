@@ -41,7 +41,8 @@
   (decisions [self] (api/unify-argv-decisions self))
   (bindings [self] (api/unify-argv-bindings self))
   (validate [self] (api/validate-domains self))
-  (translate [self] (api/translate-nary-operation "+" (map protocols/translate (:argv self)))))
+  (translate [self] (api/translate-nary-operation "+" (map protocols/translate (:argv self))))
+  (evaluate [self solution] (apply clojure.core/+ (api/eval-argv self solution))))
 
 (defrecord TermProduct [argv]
   protocols/IExpress
@@ -51,7 +52,8 @@
   (decisions [self] (api/unify-argv-decisions self))
   (bindings [self] (api/unify-argv-bindings self))
   (validate [self] (api/validate-domains self))
-  (translate [self] (api/translate-nary-operation "*" (map protocols/translate (:argv self)))))
+  (translate [self] (api/translate-nary-operation "*" (map protocols/translate (:argv self))))
+  (evaluate [self solution] (apply clojure.core/* (api/eval-argv self solution))))
 
 (defrecord TermMinus [argv]
   protocols/IExpress
@@ -61,7 +63,8 @@
   (decisions [self] (api/unify-argv-decisions self))
   (bindings [self] (api/unify-argv-bindings self))
   (validate [self] (api/validate-domains self))
-  (translate [self] (api/translate-nary-operation "-" (map protocols/translate (:argv self)))))
+  (translate [self] (api/translate-nary-operation "-" (map protocols/translate (:argv self))))
+  (evaluate [self solution] (apply clojure.core/- (api/eval-argv self solution))))
 
 (defrecord TermDivide [argv]
   protocols/IExpress
@@ -71,7 +74,8 @@
   (decisions [self] (api/unify-argv-decisions self))
   (bindings [self] (api/unify-argv-bindings self))
   (validate [self] (api/validate-domains self))
-  (translate [self] (api/translate-nary-operation "div" (map protocols/translate (:argv self)))))
+  (translate [self] (api/translate-nary-operation "div" (map protocols/translate (:argv self))))
+  (evaluate [self solution] (apply quot (api/eval-argv self solution))))
 
 (defrecord TermInc [argv]
   protocols/IExpress
@@ -82,7 +86,8 @@
   (bindings [self] (api/unify-argv-bindings self))
   (validate [self] (api/validate-domains self))
   (translate [self] (protocols/translate
-                     (plus (first argv) 1))))
+                     (plus (first argv) 1)))
+  (evaluate [self solution] (clojure.core/inc (api/eval-arg (first argv) solution))))
 
 (defrecord TermDec [argv]
   protocols/IExpress
@@ -93,7 +98,8 @@
   (bindings [self] (api/unify-argv-bindings self))
   (validate [self] (api/validate-domains self))
   (translate [self] (protocols/translate
-                     (minus (first argv) 1))))
+                     (minus (first argv) 1)))
+  (evaluate [self solution] (clojure.core/dec (api/eval-arg (first argv) solution))))
 
 (defrecord TermEven? [argv]
   protocols/IExpand
@@ -105,7 +111,8 @@
   (decisions [self] (api/unify-argv-decisions self))
   (bindings [self] (api/unify-argv-bindings self))
   (validate [self] (api/validate-domains self))
-  (translate [self] (translation-error! self)))
+  (translate [self] (translation-error! self))
+  (evaluate [self solution] (clojure.core/even? (api/eval-arg (first argv) solution))))
 
 (defrecord TermOdd? [argv]
   protocols/IExpand
@@ -117,7 +124,8 @@
   (decisions [self] (api/unify-argv-decisions self))
   (bindings [self] (api/unify-argv-bindings self))
   (validate [self] (api/validate-domains self))
-  (translate [self] (translation-error! self)))
+  (translate [self] (translation-error! self))
+  (evaluate [self solution] (clojure.core/odd? (api/eval-arg (first argv) solution))))
 
 (defn to-literal-array [elements]
   (apply str (concat ["["] (interpose ", " elements) ["]"])))
@@ -130,7 +138,8 @@
   (decisions [self] (api/unify-argv-decisions self))
   (bindings [self] (api/unify-argv-bindings self))
   (validate [self] (api/validate-domains self))
-  (translate [self] (str "max(" (to-literal-array (map protocols/translate (:argv self))) ")")))
+  (translate [self] (str "max(" (to-literal-array (map protocols/translate (:argv self))) ")"))
+  (evaluate [self solution] (apply clojure.core/max (api/eval-argv self solution))))
 
 (defrecord TermMin [argv]
   protocols/IExpress
@@ -140,7 +149,8 @@
   (decisions [self] (api/unify-argv-decisions self))
   (bindings [self] (api/unify-argv-bindings self))
   (validate [self] (api/validate-domains self))
-  (translate [self] (str "min(" (to-literal-array (map protocols/translate (:argv self))) ")")))
+  (translate [self] (str "min(" (to-literal-array (map protocols/translate (:argv self))) ")"))
+  (evaluate [self solution] (apply clojure.core/min (api/eval-argv self solution))))
 
 (defrecord TermAbs [argv]
   protocols/IExpress
@@ -150,7 +160,8 @@
   (decisions [self] (api/unify-argv-decisions self))
   (bindings [self] (api/unify-argv-bindings self))
   (validate [self] (api/validate-domains self))
-  (translate [self] (str "abs(" (protocols/translate (first (:argv self))) ")")))
+  (translate [self] (str "abs(" (protocols/translate (first (:argv self))) ")"))
+  (evaluate [self solution] (Math/abs (long (api/eval-arg (first argv) solution)))))
 
 (defrecord TermAllDifferent [argv]
   protocols/IInclude
@@ -162,7 +173,10 @@
   (decisions [self] (api/unify-argv-decisions self))
   (bindings [self] (api/unify-argv-bindings self))
   (validate [self] (api/validate-domains self))
-  (translate [self] (str "alldifferent(" (to-literal-array (map protocols/translate (:argv self))) ")")))
+  (translate [self] (str "alldifferent(" (to-literal-array (map protocols/translate (:argv self))) ")"))
+  (evaluate [self solution]
+    (let [vals (api/eval-argv self solution)]
+      (clojure.core/= (clojure.core/count vals) (clojure.core/count (distinct vals))))))
 
 (defrecord TermTrue? [argv]
   protocols/IExpress
@@ -173,7 +187,8 @@
   (bindings [self] (api/unify-argv-bindings self))
   (validate [self] (api/validate-domains self))
   (translate [self] (protocols/translate
-                     (equals (first argv) true))))
+                     (equals (first argv) true)))
+  (evaluate [self solution] (clojure.core/true? (api/eval-arg (first argv) solution))))
 
 (defrecord TermFalse? [argv]
   protocols/IExpress
@@ -184,7 +199,8 @@
   (bindings [self] (api/unify-argv-bindings self))
   (validate [self] (api/validate-domains self))
   (translate [self] (protocols/translate
-                     (equals (first argv) false))))
+                     (equals (first argv) false)))
+  (evaluate [self solution] (clojure.core/false? (api/eval-arg (first argv) solution))))
 
 (defrecord TermAnd [argv]
   protocols/IExpress
@@ -194,7 +210,8 @@
   (decisions [self] (api/unify-argv-decisions self))
   (bindings [self] (api/unify-argv-bindings self))
   (validate [self] (api/validate-domains self))
-  (translate [self] (api/translate-nary-operation "/\\" (map protocols/translate (:argv self)))))
+  (translate [self] (api/translate-nary-operation "/\\" (map protocols/translate (:argv self))))
+  (evaluate [self solution] (every? identity (api/eval-argv self solution))))
 
 (defn conjunctive? [x] (clojure.core/= (type x) TermAnd))
 
@@ -206,7 +223,8 @@
   (decisions [self] (api/unify-argv-decisions self))
   (bindings [self] (api/unify-argv-bindings self))
   (validate [self] (api/validate-domains self))
-  (translate [self] (api/translate-nary-operation "\\/" (map protocols/translate (:argv self)))))
+  (translate [self] (api/translate-nary-operation "\\/" (map protocols/translate (:argv self))))
+  (evaluate [self solution] (boolean (some identity (api/eval-argv self solution)))))
 
 (defrecord TermWhen [argv]
   protocols/IExpress
@@ -219,7 +237,10 @@
   (translate [self] (apply
                      api/translate-binary-operation
                      "->"
-                     (map protocols/translate (:argv self)))))
+                     (map protocols/translate (:argv self))))
+  (evaluate [self solution]
+    (let [[test body] (api/eval-argv self solution)]
+      (clojure.core/or (clojure.core/not test) body))))
 
 (defrecord TermGreaterThan [argv]
   protocols/IExpress
@@ -229,7 +250,8 @@
   (decisions [self] (api/unify-argv-decisions self))
   (bindings [self] (api/unify-argv-bindings self))
   (validate [self] (api/validate-domains self))
-  (translate [self] (translate-comparator self ">" greater-than)))
+  (translate [self] (translate-comparator self ">" greater-than))
+  (evaluate [self solution] (apply clojure.core/> (api/eval-argv self solution))))
 
 (defrecord TermLessThan [argv]
   protocols/IExpress
@@ -239,7 +261,8 @@
   (decisions [self] (api/unify-argv-decisions self))
   (bindings [self] (api/unify-argv-bindings self))
   (validate [self] (api/validate-domains self))
-  (translate [self] (translate-comparator self "<" less-than)))
+  (translate [self] (translate-comparator self "<" less-than))
+  (evaluate [self solution] (apply clojure.core/< (api/eval-argv self solution))))
 
 (defrecord TermGreaterThanOrEqualTo [argv]
   protocols/IExpand
@@ -258,7 +281,8 @@
   (decisions [self] (api/unify-argv-decisions self))
   (bindings [self] (api/unify-argv-bindings self))
   (validate [self] (api/validate-domains self))
-  (translate [self] (translate-comparator self ">=" gte)))
+  (translate [self] (translate-comparator self ">=" gte))
+  (evaluate [self solution] (apply clojure.core/>= (api/eval-argv self solution))))
 
 (defrecord TermLessThanOrEqualTo [argv]
   protocols/IExpress
@@ -268,7 +292,8 @@
   (decisions [self] (api/unify-argv-decisions self))
   (bindings [self] (api/unify-argv-bindings self))
   (validate [self] (api/validate-domains self))
-  (translate [self] (translate-comparator self "<=" lte)))
+  (translate [self] (translate-comparator self "<=" lte))
+  (evaluate [self solution] (apply clojure.core/<= (api/eval-argv self solution))))
 
 (defrecord TermNot [argv]
   protocols/IExpress
@@ -278,7 +303,8 @@
   (decisions [_self] (api/cacheing-decisions (first argv)))
   (bindings [_self] (protocols/bindings (first argv)))
   (validate [self] (api/validate-domains self))
-  (translate [_self] (>> {:arg (protocols/translate (first argv))} "(not {{arg}})")))
+  (translate [_self] (>> {:arg (protocols/translate (first argv))} "(not {{arg}})"))
+  (evaluate [self solution] (clojure.core/not (api/eval-arg (first argv) solution))))
 
 (defrecord TermEquals [argv]
   protocols/IExpress
@@ -302,7 +328,8 @@
                                     (apply clojure.set/intersection)))
       (throw (ex-info "equality testing requires consistent types" {})))
     self)
-  (translate [self] (translate-comparator self "=" equals)))
+  (translate [self] (translate-comparator self "=" equals))
+  (evaluate [self solution] (apply clojure.core/= (api/eval-argv self solution))))
 
 (defn condititonal-return-exprs [self]
   (->> (:argv self)
@@ -361,7 +388,12 @@
                                             (apply clojure.set/intersection)))
               (throw (ex-info "if requires consistent types in its return expressions" {})))
             (api/validate-domains self))
-  (translate [self] (translate-conditional self)))
+  (translate [self] (translate-conditional self))
+  (evaluate [self solution]
+    (let [[test then else] argv]
+      (if (api/eval-arg test solution)
+        (api/eval-arg then solution)
+        (api/eval-arg else solution)))))
 
 (defrecord TermCond [argv]
   protocols/IExpress
@@ -376,7 +408,15 @@
                                             (apply clojure.set/intersection)))
               (throw (ex-info "cond requires consistent types in its return expressions" {})))
             (api/validate-domains self))
-  (translate [self] (translate-conditional self)))
+  (translate [self] (translate-conditional self))
+  (evaluate [self solution]
+    (let [pairs (partition-all 2 argv)]
+      (loop [[[test-or-val expr :as pair] & rest] pairs]
+        (case (clojure.core/count pair)
+          2 (if (api/eval-arg test-or-val solution)
+              (api/eval-arg expr solution)
+              (recur rest))
+          1 (api/eval-arg test-or-val solution))))))
 
 (defrecord TermContains [argv]
   protocols/IExpress
@@ -389,7 +429,10 @@
   (translate [self] (api/translate-binary-operation
                      "in"
                      (protocols/translate (second (:argv self)))
-                     (protocols/translate (first (:argv self))))))
+                     (protocols/translate (first (:argv self)))))
+  (evaluate [self solution]
+    (let [[set-expr elem] (api/eval-argv self solution)]
+      (clojure.core/contains? set-expr elem))))
 
 (defrecord TermPos? [argv]
   protocols/IExpress
@@ -401,7 +444,8 @@
   (validate [self] (api/validate-domains self))
   (translate [self]
     (protocols/translate
-     (greater-than (first argv) 0))))
+     (greater-than (first argv) 0)))
+  (evaluate [self solution] (clojure.core/pos? (api/eval-arg (first argv) solution))))
 
 (defrecord TermNeg? [argv]
   protocols/IExpress
@@ -413,7 +457,8 @@
   (validate [self] (api/validate-domains self))
   (translate [self]
     (protocols/translate
-     (less-than (first argv) 0))))
+     (less-than (first argv) 0)))
+  (evaluate [self solution] (clojure.core/neg? (api/eval-arg (first argv) solution))))
 
 (defrecord TermZero? [argv]
   protocols/IExpress
@@ -425,7 +470,8 @@
   (validate [self] (api/validate-domains self))
   (translate [self]
     (protocols/translate
-     (equals (first argv) 0))))
+     (equals (first argv) 0)))
+  (evaluate [self solution] (clojure.core/zero? (api/eval-arg (first argv) solution))))
 
 (defrecord TermMod [argv]
   protocols/IExpand
@@ -443,7 +489,8 @@
   (decisions [self] (api/unify-argv-decisions self))
   (bindings [self] (api/unify-argv-bindings self))
   (validate [self] (api/validate-domains self))
-  (translate [self] (translation-error! self)))
+  (translate [self] (translation-error! self))
+  (evaluate [self solution] (apply clojure.core/mod (api/eval-argv self solution))))
 
 (defrecord TermRem [argv]
   protocols/IExpress
@@ -453,7 +500,8 @@
   (decisions [self] (api/unify-argv-decisions self))
   (bindings [self] (api/unify-argv-bindings self))
   (validate [self] (api/validate-domains self))
-  (translate [self] (apply api/translate-binary-operation "mod" (map protocols/translate argv))))
+  (translate [self] (apply api/translate-binary-operation "mod" (map protocols/translate argv)))
+  (evaluate [self solution] (apply clojure.core/rem (api/eval-argv self solution))))
 
 (defrecord TermCount [argv]
   protocols/IExpress
@@ -463,7 +511,8 @@
   (decisions [self] (api/unify-argv-decisions self))
   (bindings [self] (api/unify-argv-bindings self))
   (validate [self] (api/validate-domains self))
-  (translate [self] (>> {:set (protocols/translate (first (:argv self)))} "(card({{set}}))")))
+  (translate [self] (>> {:set (protocols/translate (first (:argv self)))} "(card({{set}}))"))
+  (evaluate [self solution] (clojure.core/count (api/eval-arg (first argv) solution))))
 
 (defrecord TermNth [argv n]
   ;; argv = [elem0 elem1 ... elemN-1 idx], n = number of elements (not counting idx)
@@ -497,154 +546,99 @@
                                      (apply clojure.set/intersection)))
       (throw (ex-info "nth requires consistent types across elements" {})))
     (api/validate-domains self))
-  (translate [self] (translation-error! self)))
+  (translate [self] (translation-error! self))
+  (evaluate [self solution]
+    (let [vals (api/eval-argv self solution)
+          elems (subvec vals 0 n)
+          idx (get vals n)]
+      (clojure.core/nth elems idx))))
 
 ;; --- Constructor functions ---
 
+(defn- ground-or-validate
+  "Construct the term once. If all args are ground, evaluate directly; otherwise validate."
+  [term ground?-check]
+  (if ground?-check
+    (protocols/evaluate term {})
+    (api/cacheing-validate term)))
+
 (defn plus [& args]
-  (if (every? ground? args)
-    (apply clojure.core/+ args)
-    (api/cacheing-validate (->TermPlus (vec args)))))
+  (ground-or-validate (->TermPlus (vec args)) (every? ground? args)))
 (defn product [& args]
-  (if (every? ground? args)
-    (apply clojure.core/* args)
-    (api/cacheing-validate (->TermProduct (vec args)))))
+  (ground-or-validate (->TermProduct (vec args)) (every? ground? args)))
 (defn minus [& args]
-  (if (every? ground? args)
-    (apply clojure.core/- args)
-    (api/cacheing-validate (->TermMinus (vec args)))))
+  (ground-or-validate (->TermMinus (vec args)) (every? ground? args)))
 (defn divide [& args]
-  (if (every? ground? args)
-    (apply quot args)
-    (api/cacheing-validate (->TermDivide (vec args)))))
+  (ground-or-validate (->TermDivide (vec args)) (every? ground? args)))
 (defn inc* [x]
-  (if (ground? x)
-    (clojure.core/inc x)
-    (api/cacheing-validate (->TermInc [x]))))
+  (ground-or-validate (->TermInc [x]) (ground? x)))
 (defn dec* [x]
-  (if (ground? x)
-    (clojure.core/dec x)
-    (api/cacheing-validate (->TermDec [x]))))
+  (ground-or-validate (->TermDec [x]) (ground? x)))
 (defn even?* [x]
-  (if (ground? x)
-    (clojure.core/even? x)
-    (api/cacheing-validate (->TermEven? [x]))))
+  (ground-or-validate (->TermEven? [x]) (ground? x)))
 (defn odd?* [x]
-  (if (ground? x)
-    (clojure.core/odd? x)
-    (api/cacheing-validate (->TermOdd? [x]))))
+  (ground-or-validate (->TermOdd? [x]) (ground? x)))
 (defn max* [& args]
-  (if (every? ground? args)
-    (apply clojure.core/max args)
-    (api/cacheing-validate (->TermMax (vec args)))))
+  (ground-or-validate (->TermMax (vec args)) (every? ground? args)))
 (defn min* [& args]
-  (if (every? ground? args)
-    (apply clojure.core/min args)
-    (api/cacheing-validate (->TermMin (vec args)))))
+  (ground-or-validate (->TermMin (vec args)) (every? ground? args)))
 (defn true?* [x]
-  (if (ground? x)
-    (clojure.core/true? x)
-    (api/cacheing-validate (->TermTrue? [x]))))
+  (ground-or-validate (->TermTrue? [x]) (ground? x)))
 (defn false?* [x]
-  (if (ground? x)
-    (clojure.core/false? x)
-    (api/cacheing-validate (->TermFalse? [x]))))
+  (ground-or-validate (->TermFalse? [x]) (ground? x)))
 (defn and* [& args]
-  (if (every? ground? args)
-    (every? identity args)
-    (api/cacheing-validate (->TermAnd (vec args)))))
+  (ground-or-validate (->TermAnd (vec args)) (every? ground? args)))
 (defn or* [& args]
-  (if (every? ground? args)
-    (boolean (some identity args))
-    (api/cacheing-validate (->TermOr (vec args)))))
+  (ground-or-validate (->TermOr (vec args)) (every? ground? args)))
 (defn when* [test body]
-  (if (every? ground? [test body])
-    (clojure.core/or (clojure.core/not test) body)
-    (api/cacheing-validate (->TermWhen [test body]))))
+  (ground-or-validate (->TermWhen [test body]) (every? ground? [test body])))
 (defn not* [x]
-  (if (ground? x)
-    (clojure.core/not x)
-    (api/cacheing-validate (->TermNot [x]))))
+  (ground-or-validate (->TermNot [x]) (ground? x)))
 (defn greater-than [& args]
-  (if (every? ground? args)
-    (apply clojure.core/> args)
-    (api/cacheing-validate (->TermGreaterThan (vec args)))))
+  (ground-or-validate (->TermGreaterThan (vec args)) (every? ground? args)))
 (defn less-than [& args]
-  (if (every? ground? args)
-    (apply clojure.core/< args)
-    (api/cacheing-validate (->TermLessThan (vec args)))))
+  (ground-or-validate (->TermLessThan (vec args)) (every? ground? args)))
 (defn gte [& args]
-  (if (every? ground? args)
-    (apply clojure.core/>= args)
-    (api/cacheing-validate (->TermGreaterThanOrEqualTo (vec args)))))
+  (ground-or-validate (->TermGreaterThanOrEqualTo (vec args)) (every? ground? args)))
 (defn lte [& args]
-  (if (every? ground? args)
-    (apply clojure.core/<= args)
-    (api/cacheing-validate (->TermLessThanOrEqualTo (vec args)))))
+  (ground-or-validate (->TermLessThanOrEqualTo (vec args)) (every? ground? args)))
 (defn equals [& args]
-  (if (every? ground? args)
-    (apply clojure.core/= args)
-    (api/cacheing-validate (->TermEquals (vec args)))))
+  (ground-or-validate (->TermEquals (vec args)) (every? ground? args)))
 (defn not-equals [& args]
   (if (every? ground? args)
-    (apply clojure.core/not= args)
+    (clojure.core/not (protocols/evaluate (->TermEquals (vec args)) {}))
     (not* (apply equals args))))
 (defn iff [test then else]
-  (if (every? ground? [test then else])
-    (if test then else)
-    (api/cacheing-validate (->TermIf [test then else]))))
+  (ground-or-validate (->TermIf [test then else]) (every? ground? [test then else])))
 (defn cond* [& args]
   (let [penultimate (get (vec args) (clojure.core/- (clojure.core/count args) 2))]
     (clojure.core/when-not (clojure.core/contains? #{:else :default} penultimate)
       (throw (ex-info "cond requires :else or :default" {})))
-    (if (every? ground? (-> (drop-last 2 args) vec (conj (last args))))
-      (let [pairs (partition-all 2 (-> (drop-last 2 args) vec (conj (last args))))]
-        (loop [[[test-or-val expr :as pair] & rest] pairs]
-          (case (clojure.core/count pair)
-            2 (if test-or-val expr (recur rest))
-            1 test-or-val)))
-      (api/cacheing-validate (->TermCond (-> (drop-last 2 args) vec (conj (last args))))))))
+    (let [normalized (-> (drop-last 2 args) vec (conj (last args)))]
+      (ground-or-validate (->TermCond normalized)
+                          (every? ground? normalized)))))
 (defn contains?* [set-expr elem]
-  (if (every? ground? [set-expr elem])
-    (clojure.core/contains? set-expr elem)
-    (api/cacheing-validate (->TermContains [set-expr elem]))))
+  (ground-or-validate (->TermContains [set-expr elem]) (every? ground? [set-expr elem])))
 (defn pos?* [x]
-  (if (ground? x)
-    (clojure.core/pos? x)
-    (api/cacheing-validate (->TermPos? [x]))))
+  (ground-or-validate (->TermPos? [x]) (ground? x)))
 (defn neg?* [x]
-  (if (ground? x)
-    (clojure.core/neg? x)
-    (api/cacheing-validate (->TermNeg? [x]))))
+  (ground-or-validate (->TermNeg? [x]) (ground? x)))
 (defn zero?* [x]
-  (if (ground? x)
-    (clojure.core/zero? x)
-    (api/cacheing-validate (->TermZero? [x]))))
+  (ground-or-validate (->TermZero? [x]) (ground? x)))
 (defn modulo [& args]
-  (if (every? ground? args)
-    (apply clojure.core/mod args)
-    (api/cacheing-validate (->TermMod (vec args)))))
+  (ground-or-validate (->TermMod (vec args)) (every? ground? args)))
 (defn remainder [& args]
-  (if (every? ground? args)
-    (apply clojure.core/rem args)
-    (api/cacheing-validate (->TermRem (vec args)))))
+  (ground-or-validate (->TermRem (vec args)) (every? ground? args)))
 (defn abs* [x]
-  (if (ground? x)
-    (Math/abs (long x))
-    (api/cacheing-validate (->TermAbs [x]))))
+  (ground-or-validate (->TermAbs [x]) (ground? x)))
 (defn all-different [& args]
-  (if (every? ground? args)
-    (clojure.core/= (clojure.core/count args) (clojure.core/count (distinct args)))
-    (api/cacheing-validate (->TermAllDifferent (vec args)))))
+  (ground-or-validate (->TermAllDifferent (vec args)) (every? ground? args)))
 (defn count* [x]
-  (if (ground? x)
-    (clojure.core/count x)
-    (api/cacheing-validate (->TermCount [x]))))
+  (ground-or-validate (->TermCount [x]) (ground? x)))
 (defn nth* [elems idx]
   {:pre [(vector? elems) (clojure.core/>= (clojure.core/count elems) 1)]}
-  (if (clojure.core/and (every? ground? elems) (ground? idx))
-    (clojure.core/nth elems idx)
-    (api/cacheing-validate (->TermNth (conj elems idx) (clojure.core/count elems)))))
+  (let [term (->TermNth (conj elems idx) (clojure.core/count elems))]
+    (ground-or-validate term (clojure.core/and (every? ground? elems) (ground? idx)))))
 
 ;; --- translate-comparator (moved from api) ---
 

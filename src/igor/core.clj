@@ -3,6 +3,7 @@
                              mod rem inc dec even? odd? pos? neg? zero?
                              true? false? not= contains? count max min nth abs])
   (:require [igor.api :as api]
+            [igor.protocols :as protocols]
             [igor.solver :as solver]
             [igor.terms.core :as terms]
             [igor.terms.set :as terms.set]
@@ -103,3 +104,9 @@
 (def as notation/as)
 (def render-notation notation/render-notation)
 (def render-problem notation/render-problem)
+
+(defn validate-solution
+  "Evaluate a constraint against a solution map in pure Clojure.
+   Returns true if the solution satisfies the constraint, false otherwise."
+  [constraint solution]
+  (protocols/evaluate constraint solution))

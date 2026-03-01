@@ -9,6 +9,7 @@
 
 (declare cacheing-validate)
 (declare cacheing-decisions)
+(declare eval-arg)
 
 (defn type-error! [expression v1 v2]
   (let [[type1 exp1] (first v1)
@@ -79,7 +80,11 @@
   (bindings [self] (when-let [r (::range (meta self))]
                      {self [r self]}))
   (validate [self] self)
-  (translate [self] (str (:id self))))
+  (translate [self] (str (:id self)))
+  (evaluate [self solution]
+    (if (contains? solution self)
+      (get solution self)
+      (throw (ex-info (str "Decision " (:id self) " not found in solution") {:decision self})))))
 
 (def decision? (partial instance? Decision))
 
@@ -159,7 +164,9 @@
   (validate [self] (doall (map cacheing-validate self)) self)
   (translate [self] (>> {:elements
                          (apply str (interpose "," (map protocols/translate self)))}
-                        "{{{elements}}}")))
+                        "{{{elements}}}"))
+  (evaluate [self solution]
+    (into (sorted-set) (map #(protocols/evaluate % solution) self))))
 
 (spec/def ::domain (spec/map-of types/all-decision-types #(some? (protocols/write %))))
 (spec/def ::domainv (spec/coll-of ::domain))
@@ -174,7 +181,8 @@
   (decisions [_self] nil)
   (bindings [_self] nil)
   (validate [self] self)
-  (translate [self] (str self)))
+  (translate [self] (str self))
+  (evaluate [self _solution] self))
 
 (extend-protocol protocols/IExpress
   Boolean
@@ -183,7 +191,8 @@
   (decisions [_self] nil)
   (bindings [_self] nil)
   (validate [self] self)
-  (translate [self] (str self)))
+  (translate [self] (str self))
+  (evaluate [self _solution] self))
 
 (extend-protocol protocols/IExpress
   Object
@@ -192,7 +201,8 @@
   (decisions [_self] nil)
   (bindings [_self] nil)
   (validate [self] self)
-  (translate [self] (throw (ex-info (str "unsupported translation for type" (type self)) {:self self}))))
+  (translate [self] (throw (ex-info (str "unsupported translation for type" (type self)) {:self self})))
+  (evaluate [self _solution] self))
 
 (extend-protocol protocols/IExpress
   nil
@@ -201,15 +211,21 @@
   (bindings [self] self)
   (validate [self] self)
   (codomain [self] self)
-  (translate [self] (throw (ex-info "unsupported type" {:self self}))))
+  (translate [self] (throw (ex-info "unsupported type" {:self self})))
+  (evaluate [self _solution] self))
 
-(extend-protocol protocols/IExpress
-  clojure.lang.IPersistentVector
-  (write [self] (mapv protocols/write self))
-  (validate [self] (mapv cacheing-validate self))
-  (decisions [self] (->> self
-                         (map cacheing-decisions)
-                         (apply merge-with-key intersect-domains))))
+(defn eval-arg
+  "Evaluate x against a solution map. If x satisfies IExpress, recurse;
+   otherwise return as-is (ground literal)."
+  [x solution]
+  (if (satisfies? protocols/IExpress x)
+    (protocols/evaluate x solution)
+    x))
+
+(defn eval-argv
+  "Evaluate all elements in (:argv term) against a solution map."
+  [term solution]
+  (mapv #(eval-arg % solution) (:argv term)))
 
 (defn unify-argv-decisions [expression]
   {:post [(spec/valid? ::decisions %)]}

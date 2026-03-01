@@ -10,6 +10,7 @@
             [igor.utils.string :refer [>>]]))
 
 (def ^:dynamic *debug* false)
+(def ^:dynamic *validate?* false)
 
 (defn ->output [decisions]
   (let [var-string (->> (for [decision (sort-by :id (-> decisions keys))]
@@ -66,16 +67,24 @@
       (apply sorted-set (range lower (+ 1 upper))))
     (read-string (str "#" out-str))))
 
-(defn detranspile [& [decisions out-str :as args]]
+(defn detranspile-full
+  "Parse MiniZinc output into a full solution map including impl decisions."
+  [decisions out-str]
   (->> (string/split out-str #"\n")
        first
        read-string
        (interleave (sort-by :id (-> decisions keys)))
        (partition 2)
        (map (partial detranspile* decisions))
-       (zipmap (sort-by :id (-> decisions keys)))
-       (filter (comp (complement api/impl-decision?) key))
-       (into {})))
+       (zipmap (sort-by :id (-> decisions keys)))))
+
+(defn filter-impl-decisions
+  "Remove impl decisions from a solution map."
+  [solution]
+  (into {} (filter (comp (complement api/impl-decision?) key) solution)))
+
+(defn detranspile [& [decisions out-str :as args]]
+  (filter-impl-decisions (detranspile-full decisions out-str)))
 
 (defn expand-all [node]
   (clojure.walk/prewalk
@@ -161,9 +170,18 @@
                                                :always (conj output-str directive-str))))]
     (if *debug*
       (do (spit "scratch/mzn" mzn) mzn)
-      ((if async?
-         adapter/call-async
-         adapter/call-sync)
-       all?
-       mzn
-       (partial detranspile merged-decisions)))))
+      (let [detranspile-fn (if *validate?*
+                             (fn [out-str]
+                               (let [full-solution (detranspile-full merged-decisions out-str)
+                                     valid? (protocols/evaluate constraint full-solution)]
+                                 (when-not valid?
+                                   (throw (ex-info "Solution validation failed: MiniZinc solution does not satisfy the original constraint"
+                                                   {:solution (filter-impl-decisions full-solution)})))
+                                 (filter-impl-decisions full-solution)))
+                             (partial detranspile merged-decisions))]
+        ((if async?
+           adapter/call-async
+           adapter/call-sync)
+         all?
+         mzn
+         detranspile-fn)))))

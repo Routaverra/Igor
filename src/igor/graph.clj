@@ -72,7 +72,7 @@
 ;; Local graph algorithms (ground pass-through)
 ;; ============================================================
 
-(defn- adjacency-list
+(defn adjacency-list
   "Build adjacency list from graph edges. Returns {from -> [to ...]}."
   [graph]
   (reduce (fn [m i]
@@ -80,7 +80,7 @@
                     (fnil conj []) (nth (:to-arr graph) i)))
           {} (range (:n-edges graph))))
 
-(defn- undirected-adjacency-list
+(defn undirected-adjacency-list
   "Build undirected adjacency list from graph edges."
   [graph]
   (reduce (fn [m i]
@@ -91,7 +91,7 @@
                   (update t (fnil conj []) f))))
           {} (range (:n-edges graph))))
 
-(defn- dfs-reachable
+(defn dfs-reachable
   "Set of nodes reachable from start following directed edges."
   [adj start]
   (loop [stack [start] visited #{}]
@@ -103,7 +103,7 @@
           (recur stack visited)
           (recur (into stack (get adj node [])) (conj visited node)))))))
 
-(defn- bfs-reachable
+(defn bfs-reachable
   "Set of nodes reachable from start following adjacency list."
   [adj start]
   (loop [queue (conj clojure.lang.PersistentQueue/EMPTY start) visited #{}]
@@ -114,6 +114,103 @@
         (if (visited node)
           (recur queue visited)
           (recur (into queue (get adj node [])) (conj visited node)))))))
+
+;; ============================================================
+;; Evaluation helpers (pure Clojure graph checks)
+;; ============================================================
+
+(defn- eval-subgraph
+  "Given a graph handle with ns-vars and es-vars, evaluate which nodes/edges are active.
+   Returns {:active-nodes #{...} :active-edges #{[from to] ...}} or nil if invalid subgraph."
+  [graph ns-vars es-vars solution]
+  (let [nodes (vec (sort (:nodes graph)))
+        active-ns (into (sorted-set)
+                        (for [i (range (count ns-vars))
+                              :when (true? (api/eval-arg (nth ns-vars i) solution))]
+                          (nth nodes i)))
+        active-es (into #{}
+                        (for [i (range (count es-vars))
+                              :when (true? (api/eval-arg (nth es-vars i) solution))]
+                          (let [e (nth (:edges graph) i)]
+                            [(first e) (second e)])))
+        ;; subgraph validity: every active edge must connect active nodes
+        valid? (every? (fn [[f t]] (and (contains? active-ns f) (contains? active-ns t)))
+                       active-es)]
+    (when valid?
+      {:active-nodes active-ns :active-edges active-es})))
+
+(defn- subgraph-adj
+  "Build directed adjacency list from active edges."
+  [active-edges]
+  (reduce (fn [m [f t]] (update m f (fnil conj []) t)) {} active-edges))
+
+(defn- subgraph-undirected-adj
+  "Build undirected adjacency list from active edges."
+  [active-edges]
+  (reduce (fn [m [f t]]
+            (-> m
+                (update f (fnil conj []) t)
+                (update t (fnil conj []) f)))
+          {} active-edges))
+
+(defn- strongly-connected?
+  "Check if the active nodes form a strongly connected subgraph."
+  [active-nodes active-edges]
+  (if (empty? active-nodes)
+    true
+    (let [adj (subgraph-adj active-edges)
+          rev-adj (reduce (fn [m [f t]] (update m t (fnil conj []) f)) {} active-edges)
+          start (first active-nodes)
+          fwd (dfs-reachable adj start)
+          bwd (dfs-reachable rev-adj start)]
+      (and (every? fwd active-nodes)
+           (every? bwd active-nodes)))))
+
+(defn- undirected-connected?
+  "Check if the active nodes form a connected undirected subgraph."
+  [active-nodes active-edges]
+  (if (empty? active-nodes)
+    true
+    (let [adj (subgraph-undirected-adj active-edges)
+          start (first active-nodes)
+          reached (bfs-reachable adj start)]
+      (every? reached active-nodes))))
+
+(defn- has-directed-cycle?
+  "Check if the directed graph on active-nodes/edges has a cycle."
+  [active-nodes active-edges]
+  (let [adj (subgraph-adj active-edges)]
+    (loop [remaining active-nodes
+           visited #{}
+           in-stack #{}]
+      (if (empty? remaining)
+        false
+        (let [start (first remaining)]
+          (if (visited start)
+            (recur (rest remaining) visited in-stack)
+            (let [result (atom false)
+                  v (atom visited)
+                  s (atom in-stack)]
+              ;; iterative DFS with explicit stack tracking path
+              (loop [stack [[start :enter]]]
+                (when (seq stack)
+                  (let [[node action] (peek stack)
+                        stack (pop stack)]
+                    (case action
+                      :enter
+                      (if (@s node)
+                        (reset! result true)
+                        (when-not (@v node)
+                          (swap! v conj node)
+                          (swap! s conj node)
+                          (recur (into (conj stack [node :exit])
+                                       (map (fn [n] [n :enter]) (get adj node []))))))
+                      :exit
+                      (do (swap! s disj node)
+                          (recur stack))))))
+              (if @result
+                true
+                (recur (rest remaining) @v @s)))))))))
 
 ;; ============================================================
 ;; Constraint term records
@@ -138,7 +235,9 @@
           e (:n-edges g)]
       (str "subgraph(" n ", " e ", "
            (graph-from-str g) ", " (graph-to-str g) ", "
-           (ns-str (:ns-vars self)) ", " (es-str (:es-vars self)) ")"))))
+           (ns-str (:ns-vars self)) ", " (es-str (:es-vars self)) ")")))
+  (evaluate [self solution]
+    (some? (eval-subgraph graph ns-vars es-vars solution))))
 
 (defrecord TermGraphReachable [argv graph ns-vars es-vars root]
   protocols/IInclude
@@ -159,7 +258,13 @@
       (str "reachable(" n ", " e ", "
            (graph-from-str g) ", " (graph-to-str g) ", "
            (translate-1idx (:root self)) ", "
-           (ns-str (:ns-vars self)) ", " (es-str (:es-vars self)) ")"))))
+           (ns-str (:ns-vars self)) ", " (es-str (:es-vars self)) ")")))
+  (evaluate [self solution]
+    (when-let [{:keys [active-nodes active-edges]} (eval-subgraph graph ns-vars es-vars solution)]
+      (let [root-val (api/eval-arg root solution)
+            adj (subgraph-undirected-adj active-edges)
+            reached (bfs-reachable adj root-val)]
+        (every? reached active-nodes)))))
 
 (defrecord TermGraphDReachable [argv graph ns-vars es-vars root]
   protocols/IInclude
@@ -180,7 +285,13 @@
       (str "dreachable(" n ", " e ", "
            (graph-from-str g) ", " (graph-to-str g) ", "
            (translate-1idx (:root self)) ", "
-           (ns-str (:ns-vars self)) ", " (es-str (:es-vars self)) ")"))))
+           (ns-str (:ns-vars self)) ", " (es-str (:es-vars self)) ")")))
+  (evaluate [self solution]
+    (when-let [{:keys [active-nodes active-edges]} (eval-subgraph graph ns-vars es-vars solution)]
+      (let [root-val (api/eval-arg root solution)
+            adj (subgraph-adj active-edges)
+            reached (dfs-reachable adj root-val)]
+        (every? reached active-nodes)))))
 
 ;; --- connected.mzn (enum-indexed only, no N/E params) ---
 
@@ -199,7 +310,10 @@
     (let [g (:graph self)]
       (str "connected("
            (graph-from-str g) ", " (graph-to-str g) ", "
-           (ns-str (:ns-vars self)) ", " (es-str (:es-vars self)) ")"))))
+           (ns-str (:ns-vars self)) ", " (es-str (:es-vars self)) ")")))
+  (evaluate [self solution]
+    (when-let [{:keys [active-nodes active-edges]} (eval-subgraph graph ns-vars es-vars solution)]
+      (undirected-connected? active-nodes active-edges))))
 
 (defrecord TermGraphDConnected [argv graph ns-vars es-vars]
   protocols/IInclude
@@ -216,7 +330,10 @@
     (let [g (:graph self)]
       (str "dconnected("
            (graph-from-str g) ", " (graph-to-str g) ", "
-           (ns-str (:ns-vars self)) ", " (es-str (:es-vars self)) ")"))))
+           (ns-str (:ns-vars self)) ", " (es-str (:es-vars self)) ")")))
+  (evaluate [self solution]
+    (when-let [{:keys [active-nodes active-edges]} (eval-subgraph graph ns-vars es-vars solution)]
+      (strongly-connected? active-nodes active-edges))))
 
 ;; --- dag.mzn (enum-indexed only) ---
 
@@ -235,7 +352,10 @@
     (let [g (:graph self)]
       (str "dag("
            (graph-from-str g) ", " (graph-to-str g) ", "
-           (ns-str (:ns-vars self)) ", " (es-str (:es-vars self)) ")"))))
+           (ns-str (:ns-vars self)) ", " (es-str (:es-vars self)) ")")))
+  (evaluate [self solution]
+    (when-let [{:keys [active-nodes active-edges]} (eval-subgraph graph ns-vars es-vars solution)]
+      (not (has-directed-cycle? active-nodes active-edges)))))
 
 ;; --- path.mzn ---
 
@@ -258,7 +378,14 @@
       (str "path(" n ", " e ", "
            (graph-from-str g) ", " (graph-to-str g) ", "
            (translate-1idx (:source self)) ", " (translate-1idx (:target self)) ", "
-           (ns-str (:ns-vars self)) ", " (es-str (:es-vars self)) ")"))))
+           (ns-str (:ns-vars self)) ", " (es-str (:es-vars self)) ")")))
+  (evaluate [self solution]
+    (when-let [{:keys [active-nodes active-edges]} (eval-subgraph graph ns-vars es-vars solution)]
+      (let [src (api/eval-arg source solution)
+            tgt (api/eval-arg target solution)]
+        (and (contains? active-nodes src)
+             (contains? active-nodes tgt)
+             (undirected-connected? active-nodes active-edges))))))
 
 (defrecord TermGraphDPath [argv graph ns-vars es-vars source target]
   protocols/IInclude
@@ -279,7 +406,16 @@
       (str "dpath(" n ", " e ", "
            (graph-from-str g) ", " (graph-to-str g) ", "
            (translate-1idx (:source self)) ", " (translate-1idx (:target self)) ", "
-           (ns-str (:ns-vars self)) ", " (es-str (:es-vars self)) ")"))))
+           (ns-str (:ns-vars self)) ", " (es-str (:es-vars self)) ")")))
+  (evaluate [self solution]
+    (when-let [{:keys [active-nodes active-edges]} (eval-subgraph graph ns-vars es-vars solution)]
+      (let [src (api/eval-arg source solution)
+            tgt (api/eval-arg target solution)
+            adj (subgraph-adj active-edges)
+            reached (dfs-reachable adj src)]
+        (and (contains? active-nodes src)
+             (contains? active-nodes tgt)
+             (contains? reached tgt))))))
 
 ;; --- bounded_path.mzn ---
 
@@ -304,7 +440,18 @@
            (graph-weight-str g) ", "
            (translate-1idx (:source self)) ", " (translate-1idx (:target self)) ", "
            (ns-str (:ns-vars self)) ", " (es-str (:es-vars self)) ", "
-           (protocols/translate (:cost self)) ")"))))
+           (protocols/translate (:cost self)) ")")))
+  (evaluate [self solution]
+    (when-let [{:keys [active-nodes active-edges]} (eval-subgraph graph ns-vars es-vars solution)]
+      (let [src (api/eval-arg source solution)
+            tgt (api/eval-arg target solution)
+            cost-val (api/eval-arg cost solution)
+            edge-weights (into {} (map (fn [e] [[(first e) (second e)] (nth e 2)]) (:edges graph)))
+            total (reduce + (map #(get edge-weights % 0) active-edges))]
+        (and (contains? active-nodes src)
+             (contains? active-nodes tgt)
+             (undirected-connected? active-nodes active-edges)
+             (= cost-val total))))))
 
 (defrecord TermGraphBoundedDPath [argv graph ns-vars es-vars source target cost]
   protocols/IInclude
@@ -327,7 +474,20 @@
            (graph-weight-str g) ", "
            (translate-1idx (:source self)) ", " (translate-1idx (:target self)) ", "
            (ns-str (:ns-vars self)) ", " (es-str (:es-vars self)) ", "
-           (protocols/translate (:cost self)) ")"))))
+           (protocols/translate (:cost self)) ")")))
+  (evaluate [self solution]
+    (when-let [{:keys [active-nodes active-edges]} (eval-subgraph graph ns-vars es-vars solution)]
+      (let [src (api/eval-arg source solution)
+            tgt (api/eval-arg target solution)
+            cost-val (api/eval-arg cost solution)
+            adj (subgraph-adj active-edges)
+            reached (dfs-reachable adj src)
+            edge-weights (into {} (map (fn [e] [[(first e) (second e)] (nth e 2)]) (:edges graph)))
+            total (reduce + (map #(get edge-weights % 0) active-edges))]
+        (and (contains? active-nodes src)
+             (contains? active-nodes tgt)
+             (contains? reached tgt)
+             (= cost-val total))))))
 
 ;; --- tree.mzn ---
 
@@ -350,7 +510,15 @@
       (str "tree(" n ", " e ", "
            (graph-from-str g) ", " (graph-to-str g) ", "
            (translate-1idx (:root self)) ", "
-           (ns-str (:ns-vars self)) ", " (es-str (:es-vars self)) ")"))))
+           (ns-str (:ns-vars self)) ", " (es-str (:es-vars self)) ")")))
+  (evaluate [self solution]
+    (when-let [{:keys [active-nodes active-edges]} (eval-subgraph graph ns-vars es-vars solution)]
+      (let [root-val (api/eval-arg root solution)
+            n-nodes (count active-nodes)
+            n-edges (count active-edges)]
+        (and (contains? active-nodes root-val)
+             (= n-edges (dec n-nodes))
+             (undirected-connected? active-nodes active-edges))))))
 
 (defrecord TermGraphDTree [argv graph ns-vars es-vars root]
   protocols/IInclude
@@ -371,7 +539,17 @@
       (str "dtree(" n ", " e ", "
            (graph-from-str g) ", " (graph-to-str g) ", "
            (translate-1idx (:root self)) ", "
-           (ns-str (:ns-vars self)) ", " (es-str (:es-vars self)) ")"))))
+           (ns-str (:ns-vars self)) ", " (es-str (:es-vars self)) ")")))
+  (evaluate [self solution]
+    (when-let [{:keys [active-nodes active-edges]} (eval-subgraph graph ns-vars es-vars solution)]
+      (let [root-val (api/eval-arg root solution)
+            adj (subgraph-adj active-edges)
+            reached (dfs-reachable adj root-val)
+            n-nodes (count active-nodes)
+            n-edges (count active-edges)]
+        (and (contains? active-nodes root-val)
+             (= n-edges (dec n-nodes))
+             (every? reached active-nodes))))))
 
 ;; --- weighted_spanning_tree.mzn (no ns — all nodes participate) ---
 
@@ -395,7 +573,21 @@
            (graph-from-str g) ", " (graph-to-str g) ", "
            (graph-weight-str g) ", "
            (es-str (:es-vars self)) ", "
-           (protocols/translate (:cost self)) ")"))))
+           (protocols/translate (:cost self)) ")")))
+  (evaluate [self solution]
+    (let [nodes (:nodes graph)
+          active-es (into #{}
+                          (for [i (range (count es-vars))
+                                :when (true? (api/eval-arg (nth es-vars i) solution))]
+                            (let [e (nth (:edges graph) i)]
+                              [(first e) (second e)])))
+          cost-val (api/eval-arg cost solution)
+          edge-weights (into {} (map (fn [e] [[(first e) (second e)] (nth e 2)]) (:edges graph)))
+          total (reduce + (map #(get edge-weights % 0) active-es))
+          n-edges (count active-es)]
+      (and (= n-edges (dec (count nodes)))
+           (undirected-connected? nodes active-es)
+           (= cost-val total)))))
 
 (defrecord TermGraphDWeightedSpanningTree [argv graph es-vars root cost]
   protocols/IInclude
@@ -418,7 +610,24 @@
            (graph-weight-str g) ", "
            (translate-1idx (:root self)) ", "
            (es-str (:es-vars self)) ", "
-           (protocols/translate (:cost self)) ")"))))
+           (protocols/translate (:cost self)) ")")))
+  (evaluate [self solution]
+    (let [nodes (:nodes graph)
+          active-es (into #{}
+                          (for [i (range (count es-vars))
+                                :when (true? (api/eval-arg (nth es-vars i) solution))]
+                            (let [e (nth (:edges graph) i)]
+                              [(first e) (second e)])))
+          root-val (api/eval-arg root solution)
+          cost-val (api/eval-arg cost solution)
+          adj (subgraph-adj active-es)
+          reached (dfs-reachable adj root-val)
+          edge-weights (into {} (map (fn [e] [[(first e) (second e)] (nth e 2)]) (:edges graph)))
+          total (reduce + (map #(get edge-weights % 0) active-es))
+          n-edges (count active-es)]
+      (and (= n-edges (dec (count nodes)))
+           (every? reached nodes)
+           (= cost-val total)))))
 
 ;; --- circuit.mzn / subcircuit.mzn (successor-array pattern) ---
 
@@ -435,7 +644,20 @@
   (translate [self]
     (str "circuit("
          (terms/to-literal-array (map #(str (protocols/translate %) " + 1") (:argv self)))
-         ")")))
+         ")"))
+  (evaluate [self solution]
+    (let [nodes (vec (sort (:nodes graph)))
+          n (count nodes)
+          succ-vals (mapv #(api/eval-arg % solution) succ)]
+      ;; Single Hamiltonian cycle: follow successor from node 0, must visit all nodes
+      (loop [current (first nodes) visited #{} steps 0]
+        (if (>= steps n)
+          (and (= steps n) (= current (first nodes)) (= (count visited) n))
+          (let [idx (.indexOf nodes current)
+                next-node (nth succ-vals idx)]
+            (if (contains? visited current)
+              false
+              (recur next-node (conj visited current) (inc steps)))))))))
 
 (defrecord TermGraphSubCircuit [argv graph succ]
   protocols/IInclude
@@ -450,7 +672,32 @@
   (translate [self]
     (str "subcircuit("
          (terms/to-literal-array (map #(str (protocols/translate %) " + 1") (:argv self)))
-         ")")))
+         ")"))
+  (evaluate [self solution]
+    (let [nodes (vec (sort (:nodes graph)))
+          n (count nodes)
+          succ-vals (mapv #(api/eval-arg % solution) succ)
+          ;; Active nodes are those where succ[i] != node[i]
+          active (into #{} (for [i (range n)
+                                 :when (not= (nth nodes i) (nth succ-vals i))]
+                             (nth nodes i)))]
+      (if (empty? active)
+        true  ;; no active nodes = valid subcircuit
+        ;; Each active node's successor must be active, and following successors forms a single cycle
+        (and (every? (fn [node]
+                       (let [idx (.indexOf nodes node)]
+                         (contains? active (nth succ-vals idx))))
+                     active)
+             ;; Follow from any active node — must return to start after visiting all active
+             (let [start (first active)]
+               (loop [current start visited #{} steps 0]
+                 (if (>= steps (count active))
+                   (and (= current start) (= (count visited) (count active)))
+                   (let [idx (.indexOf nodes current)
+                         next-node (nth succ-vals idx)]
+                     (if (contains? visited current)
+                       false
+                       (recur next-node (conj visited current) (inc steps))))))))))))
 
 ;; ============================================================
 ;; Constructor functions

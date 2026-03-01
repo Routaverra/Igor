@@ -39,7 +39,7 @@
 ;; DFA simulation (ground pass-through)
 ;; ============================================================
 
-(defn- simulate-dfa
+(defn simulate-dfa
   "Run a DFA on a ground sequence. Returns true if the DFA accepts."
   [{:keys [transitions start accept]} sequence]
   (loop [state start
@@ -73,7 +73,10 @@
            (terms/to-literal-array (map protocols/translate (:argv self)))
            ", "
            (array2d-str n-tuples n-vars flat)
-           ")"))))
+           ")")))
+  (evaluate [self solution]
+    (let [vals (api/eval-argv self solution)]
+      (boolean (some #(= (vec vals) (vec %)) tuples)))))
 
 ;; ============================================================
 ;; TermRegular (classic 1..S overload with offset remapping)
@@ -107,11 +110,27 @@
            (terms/to-literal-array x-strs)
            ", " q ", " s ", "
            (array2d-str q s flat)
-           ", " q0 ", " f-set ")"))))
+           ", " q0 ", " f-set ")")))
+  (evaluate [self solution]
+    (simulate-dfa dfa (api/eval-argv self solution))))
 
 ;; ============================================================
 ;; TermCostRegular (classic int overload, requires alphabet remapping)
 ;; ============================================================
+
+(defn simulate-dfa-cost
+  "Run a DFA on a ground sequence, accumulating cost. Returns [accepted? total-cost]."
+  [{:keys [transitions start accept costs]} sequence]
+  (loop [state start
+         total-cost 0
+         [x & xs] sequence]
+    (if (nil? x)
+      [(contains? accept state) total-cost]
+      (let [next-state (get (nth transitions state) x)
+            step-cost (get (nth costs state) x 0)]
+        (if (nil? next-state)
+          [false total-cost]
+          (recur next-state (+ total-cost step-cost) xs))))))
 
 (defrecord TermCostRegular [argv cost dfa]
   protocols/IInclude
@@ -147,20 +166,28 @@
            (array2d-str q s flat-d)
            ", " q0 ", " f-set ", "
            (array2d-str q s flat-c)
-           ", " (protocols/translate (:cost self)) ")"))))
+           ", " (protocols/translate (:cost self)) ")")))
+  (evaluate [self solution]
+    (let [cost-val (api/eval-arg cost solution)
+          seq-vals (mapv #(api/eval-arg % solution) (rest argv))
+          [accepted? total-cost] (simulate-dfa-cost dfa seq-vals)]
+      (and accepted? (= cost-val total-cost)))))
 
 ;; ============================================================
 ;; Constructor functions
 ;; ============================================================
+
+(defn- ground-or-validate [term ground?]
+  (if ground?
+    (protocols/evaluate term {})
+    (api/cacheing-validate term)))
 
 (defn table
   "Constrain that the tuple of vars x is one of the allowed tuples.
    x is a vec of decision vars, tuples is a vec of vec of ints."
   [x tuples]
   {:pre [(vector? x) (seq tuples) (every? #(= (count %) (count x)) tuples)]}
-  (if (every? terms/ground? x)
-    (boolean (some #(= (vec x) (vec %)) tuples))
-    (api/cacheing-validate (->TermTable x tuples))))
+  (ground-or-validate (->TermTable x tuples) (every? terms/ground? x)))
 
 (defn regular
   "Constrain that the sequence x is accepted by the given DFA.
@@ -175,9 +202,7 @@
          (= (:states dfa) (count (:transitions dfa)))
          (integer? (:start dfa))
          (set? (:accept dfa))]}
-  (if (every? terms/ground? x)
-    (simulate-dfa dfa x)
-    (api/cacheing-validate (->TermRegular x dfa))))
+  (ground-or-validate (->TermRegular x dfa) (every? terms/ground? x)))
 
 (defn cost-regular
   "Constrain that the sequence x is accepted by the given DFA, with cost.
