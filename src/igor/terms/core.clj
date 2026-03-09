@@ -163,6 +163,17 @@
   (translate [self] (str "abs(" (protocols/translate (first (:argv self))) ")"))
   (evaluate [self solution] (Math/abs (long (api/eval-arg (first argv) solution)))))
 
+(defrecord TermPow [argv]
+  protocols/IExpress
+  (write [_self] (apply list 'pow (map protocols/write argv)))
+  (codomain [self] {types/Numeric self})
+  (domainv [self] [{types/Numeric self} {types/Numeric self}])
+  (decisions [self] (api/unify-argv-decisions self))
+  (bindings [self] (api/unify-argv-bindings self))
+  (validate [self] (api/validate-domains self))
+  (translate [self] (str "pow(" (protocols/translate (first (:argv self))) ", " (protocols/translate (second (:argv self))) ")"))
+  (evaluate [self solution] (long (Math/pow (api/eval-arg (first argv) solution) (api/eval-arg (second argv) solution)))))
+
 (defrecord TermAllDifferent [argv]
   protocols/IInclude
   (mzn-includes [_self] #{"alldifferent.mzn"})
@@ -631,6 +642,8 @@
   (ground-or-validate (->TermRem (vec args)) (every? ground? args)))
 (defn abs* [x]
   (ground-or-validate (->TermAbs [x]) (ground? x)))
+(defn pow* [base exp]
+  (ground-or-validate (->TermPow [base exp]) (every? ground? [base exp])))
 (defn all-different [& args]
   (ground-or-validate (->TermAllDifferent (vec args)) (every? ground? args)))
 (defn count* [x]

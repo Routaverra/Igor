@@ -55,6 +55,7 @@
    igor.terms.core.TermDivide   7
    igor.terms.core.TermMod      7
    igor.terms.core.TermRem      7
+   igor.terms.core.TermPow      8
    igor.terms.core.TermAbs      8
    igor.terms.core.TermInc      8
    igor.terms.core.TermDec      8})
@@ -391,6 +392,10 @@
 (defmethod render-node [igor.terms.core.TermAbs :latex] [node env]
   (str "\\left|" (render-subtree (first (:argv node)) env) "\\right|"))
 
+(defmethod render-node [igor.terms.core.TermPow :latex] [node env]
+  (let [[base exp] (:argv node)]
+    (str "{" (render-child node base env) "}^{" (render-subtree exp env) "}")))
+
 (defmethod render-node [igor.terms.core.TermMax :latex] [node env]
   (str "\\max(" (str/join ", " (map #(render-subtree % env) (:argv node))) ")"))
 
@@ -653,6 +658,10 @@
 
 (defmethod render-node [igor.terms.core.TermAbs :unicode] [node env]
   (str "|" (render-subtree (first (:argv node)) env) "|"))
+
+(defmethod render-node [igor.terms.core.TermPow :unicode] [node env]
+  (let [[base exp] (:argv node)]
+    (str (render-child node base env) "^" (render-subtree exp env))))
 
 (defmethod render-node [igor.terms.core.TermMax :unicode] [node env]
   (str "max(" (str/join ", " (map #(render-subtree % env) (:argv node))) ")"))

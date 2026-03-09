@@ -441,6 +441,35 @@
     (is (true? (i/all-different 1 2 3)))
     (is (false? (i/all-different 1 2 1)))))
 
+(deftest pow-test
+  (testing "pow with literals evaluates in Clojure"
+    (is (= 8 (i/pow 2 3)))
+    (is (= 1 (i/pow 5 0)))
+    (is (= 1024 (i/pow 2 10)))
+    (is (= 1 (i/pow 1 100))))
+
+  (testing "pow with decisions"
+    (let [x (i/fresh-int (range 1 11))
+          y (i/fresh-int (range 101))]
+      (is (= 8 (get (i/satisfy (i/and (i/= x 2) (i/= y (i/pow x 3)))) y)))
+      (is (= 27 (get (i/satisfy (i/and (i/= x 3) (i/= y (i/pow x 3)))) y)))))
+
+  (testing "pow with variable exponent"
+    (let [base (i/fresh-int (range 1 11))
+          exp  (i/fresh-int (range 5))
+          result (i/fresh-int (range 10000))]
+      (is (= 16 (get (i/satisfy (i/and (i/= base 2) (i/= exp 4) (i/= result (i/pow base exp)))) result)))))
+
+  (testing "pow validates against Clojure evaluation"
+    (let [x (i/fresh-int (range 1 6))
+          y (i/fresh-int (range 4))
+          r (i/fresh-int (range 10000))
+          solution (i/satisfy (i/and (i/= x 3) (i/= y 3) (i/= r (i/pow x y))))]
+      (is (= 27 (get solution r)))
+      (is (i/validate-solution
+           (i/and (i/= x 3) (i/= y 3) (i/= r (i/pow x y)))
+           solution)))))
+
 (deftest mod-rem-test
   (testing "mod and rem"
     (is (some?

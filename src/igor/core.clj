@@ -80,6 +80,7 @@
 (def count terms/count*)
 (def nth terms/nth*)
 (def abs terms/abs*)
+(def pow terms/pow*)
 (def all-different terms/all-different)
 (def contains? terms/contains?*)
 (def intersection terms.set/intersection)
