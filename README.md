@@ -64,7 +64,7 @@ All solving functions accept an options map with `{:async? true}` to return a `c
 (solution x)
 ```
 
-**Validation** — Cross-check MiniZinc solutions by evaluating the constraint AST in pure Clojure:
+**Validation** — Cross-check solutions by evaluating the constraint AST in pure Clojure:
 
 ```clojure
 (i/validate-solution constraint solution)  ; => true/false
@@ -298,7 +298,7 @@ DFA maps use 0-indexed states:
 
 ### Graph Constraints
 
-Igor wraps the [MiniZinc graph library](https://www.minizinc.org/doc-2.8.5/en/lib-globals-graph.html). You define a directed graph as an edge list, then apply constraints that ask the solver to select a subgraph satisfying structural properties — paths, trees, cycles, connectivity. The solver decides which nodes and edges are "active."
+You define a directed graph as an edge list, then apply constraints that ask the solver to select a subgraph satisfying structural properties — paths, trees, cycles, connectivity. The solver decides which nodes and edges are "active."
 
 ```clojure
 (i/digraph [[0 1] [1 2] [2 0]])               ; unweighted edges [from to]
