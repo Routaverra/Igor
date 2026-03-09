@@ -78,6 +78,69 @@ All solving functions accept an options map with `{:async? true}` to return a `c
 (i/validate-solution constraint solution)  ; => true/false
 ```
 
+## Composability
+
+Constraints are plain Clojure data. You compose them with ordinary functions — `map`, `apply`, `partition`, closures — the same patterns you already use.
+
+### Constraint-producing functions
+
+Any function that returns a constraint expression works with `map`, `apply`, and the rest of the sequence library.
+
+```clojure
+(defn exceeds-index [vars k]
+  (i/> (nth vars k) k))
+
+(let [n    5
+      vars (vec (repeatedly n #(i/fresh-int (range 20))))
+      sol  (i/satisfy (apply i/and (map #(exceeds-index vars %) (range n))))]
+  (mapv sol vars))
+;; => e.g. [1 2 3 4 5] — each value exceeds its index
+```
+
+### Higher-order constraint builders
+
+Pass constraint-producing functions to higher-order combinators the same way you would with any other data.
+
+```clojure
+(defn pairwise [f vars]
+  (apply i/and (map (fn [[a b]] (f a b))
+                    (partition 2 1 vars))))
+```
+
+Enforce "strictly increasing" and "gaps ≤ 3" on the same variables:
+
+```clojure
+(let [vars (vec (repeatedly 5 #(i/fresh-int (range 20))))
+      sol  (i/satisfy (i/and (pairwise i/< vars)
+                             (pairwise (fn [a b] (i/<= (i/- b a) 3)) vars)))]
+  (mapv sol vars))
+;; => e.g. [0 1 2 3 4]
+```
+
+### Composing constraint modules
+
+Split a problem into independent constraint functions, then assemble them at the call site.
+
+```clojure
+(defn row-constraints [grid]
+  (apply i/and (for [row grid]
+                 (apply i/all-different row))))
+
+(defn col-constraints [grid]
+  (let [cols (apply map vector grid)]
+    (apply i/and (for [col cols]
+                   (apply i/all-different col)))))
+
+(let [grid (vec (for [_ (range 4)]
+                  (vec (repeatedly 4 #(i/fresh-int (range 1 5))))))
+      sol  (i/satisfy (i/and (row-constraints grid)
+                             (col-constraints grid)))]
+  (mapv (fn [row] (mapv sol row)) grid))
+;; => a valid 4×4 Latin square
+```
+
+Each constraint function is independently testable, reusable across problems, and invisible to the solver — it just sees one conjunction of data.
+
 ## Examples
 
 ### SEND + MORE = MONEY
@@ -209,69 +272,6 @@ You define a graph as an edge list, then apply structural constraints — paths,
 ```
 
 For more usage examples, see [test/routaverra/igor/constraint_problems_test.clj](test/routaverra/igor/constraint_problems_test.clj) — classic CSP benchmarks (SEND+MORE=MONEY, N-queens, magic squares, graph coloring, etc.) implemented in Igor.
-
-## Composability
-
-Constraints are plain Clojure data. You compose them with ordinary functions — `map`, `apply`, `partition`, closures — the same patterns you already use.
-
-### Constraint-producing functions
-
-Any function that returns a constraint expression works with `map`, `apply`, and the rest of the sequence library.
-
-```clojure
-(defn exceeds-index [vars k]
-  (i/> (nth vars k) k))
-
-(let [n    5
-      vars (vec (repeatedly n #(i/fresh-int (range 20))))
-      sol  (i/satisfy (apply i/and (map #(exceeds-index vars %) (range n))))]
-  (mapv sol vars))
-;; => e.g. [1 2 3 4 5] — each value exceeds its index
-```
-
-### Higher-order constraint builders
-
-Pass constraint-producing functions to higher-order combinators the same way you would with any other data.
-
-```clojure
-(defn pairwise [f vars]
-  (apply i/and (map (fn [[a b]] (f a b))
-                    (partition 2 1 vars))))
-```
-
-Enforce "strictly increasing" and "gaps ≤ 3" on the same variables:
-
-```clojure
-(let [vars (vec (repeatedly 5 #(i/fresh-int (range 20))))
-      sol  (i/satisfy (i/and (pairwise i/< vars)
-                             (pairwise (fn [a b] (i/<= (i/- b a) 3)) vars)))]
-  (mapv sol vars))
-;; => e.g. [0 1 2 3 4]
-```
-
-### Composing constraint modules
-
-Split a problem into independent constraint functions, then assemble them at the call site.
-
-```clojure
-(defn row-constraints [grid]
-  (apply i/and (for [row grid]
-                 (apply i/all-different row))))
-
-(defn col-constraints [grid]
-  (let [cols (apply map vector grid)]
-    (apply i/and (for [col cols]
-                   (apply i/all-different col)))))
-
-(let [grid (vec (for [_ (range 4)]
-                  (vec (repeatedly 4 #(i/fresh-int (range 1 5))))))
-      sol  (i/satisfy (i/and (row-constraints grid)
-                             (col-constraints grid)))]
-  (mapv (fn [row] (mapv sol row)) grid))
-;; => a valid 4×4 Latin square
-```
-
-Each constraint function is independently testable, reusable across problems, and invisible to the solver — it just sees one conjunction of data.
 
 ## Operations Reference
 
