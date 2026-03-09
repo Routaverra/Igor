@@ -4,7 +4,7 @@ Constraint programming for Clojure, backed by [MiniZinc](https://www.minizinc.or
 >
 > — Igor Stravinsky, *Poetics of Music*
 
-You declare variables, state what must be true about them, and a solver finds values that satisfy all constraints simultaneously. Igor compiles your constraints to MiniZinc and hands them to industrial solvers (Gecode, OR-Tools, etc.); solutions come back as Clojure maps.
+Igor shadows Clojure's core operators (`+`, `=`, `and`, `every?`, etc.) to produce constraint expressions that are first-class and data-oriented. You declare variables with domains, compose constraints using familiar Clojure syntax, and industrial solvers (Gecode, OR-Tools, etc.) return solutions as plain maps. It supports integer arithmetic, set algebra, universal quantification, extensional constraints (table, regular, cost-regular), and a graph constraint library — paths, spanning trees, circuits, connectivity — all composable and all optimizable via maximize/minimize.
 
 ## Installation
 
