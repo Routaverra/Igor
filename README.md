@@ -1,8 +1,8 @@
+Constraint programming for Clojure, backed by [MiniZinc](https://www.minizinc.org/).
+
 > My freedom will be so much the greater and more meaningful the more narrowly I limit my field of action and the more I surround myself with obstacles. Whatever diminishes constraint, diminishes strength. The more constraints one imposes, the more one frees one's self of the chains that shackle the spirit.
 >
 > — Igor Stravinsky, *Poetics of Music*
-
-Constraint programming for Clojure, backed by [MiniZinc](https://www.minizinc.org/).
 
 You declare variables, state what must be true about them, and a solver finds values that satisfy all constraints simultaneously. Igor compiles your constraints to MiniZinc and hands them to industrial solvers (Gecode, OR-Tools, etc.); solutions come back as Clojure maps.
 
