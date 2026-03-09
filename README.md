@@ -145,12 +145,14 @@ Each constraint function is independently testable, reusable across problems, an
 
 ### SEND + MORE = MONEY
 
-The classic cryptarithmetic puzzle: assign a distinct digit to each letter so that the equation holds.
+Each letter stands for a different digit (0–9). The goal: find the unique digit assignment that makes the addition work as ordinary base-10 arithmetic. The constraints are that all eight letters map to distinct digits, leading digits (`S` and `M`) can't be zero, and the place-value sums must balance.
 
 ```clojure
 (let [d (range 10)
+      ;; One decision variable per letter, each drawn from 0–9
       s (i/fresh-int d) e (i/fresh-int d) n (i/fresh-int d) d* (i/fresh-int d)
       m (i/fresh-int d) o (i/fresh-int d) r (i/fresh-int d) y  (i/fresh-int d)
+      ;; Build the place-value numbers from their digits
       send  (i/+ (i/* s 1000) (i/* e 100) (i/* n 10) d*)
       more  (i/+ (i/* m 1000) (i/* o 100) (i/* r 10) e)
       money (i/+ (i/* m 10000) (i/* o 1000) (i/* n 100) (i/* e 10) y)
@@ -271,7 +273,7 @@ You define a graph as an edge list, then apply structural constraints — paths,
 ;; => #{0 1 2}
 ```
 
-For more usage examples, see [test/routaverra/igor/constraint_problems_test.clj](test/routaverra/igor/constraint_problems_test.clj) — classic CSP benchmarks (SEND+MORE=MONEY, N-queens, magic squares, graph coloring, etc.) implemented in Igor.
+For more usage examples, see [test/routaverra/igor/constraint_problems_test.clj](test/routaverra/igor/constraint_problems_test.clj) — N-queens, magic squares, graph coloring, and other classic CSP benchmarks implemented in Igor.
 
 ## Operations Reference
 
