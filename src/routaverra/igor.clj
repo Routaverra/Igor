@@ -11,7 +11,8 @@
             [routaverra.igor.terms.introduced :as terms.introduced]
             [routaverra.igor.graph :as graph]
             [routaverra.igor.extensional :as extensional]
-            [routaverra.igor.notation :as notation]))
+            [routaverra.igor.notation :as notation]
+            [clojure.walk :as walk]))
 
 (def fresh api/fresh)
 (def fresh-set api/fresh-set)
@@ -30,6 +31,18 @@
    (satisfy-all term {}))
   ([term opts]
    (solver/solve (assoc opts :all? true) term nil)))
+
+(defn satisfy-data
+  ([constraint data]
+   (satisfy-data constraint data {}))
+  ([constraint data opts]
+   (when-let [solution (satisfy constraint opts)]
+     (walk/postwalk
+      (fn [x]
+        (if (api/decision? x)
+          (get solution x x)
+          x))
+      data))))
 
 (defn maximize
   ([obj constraint]
