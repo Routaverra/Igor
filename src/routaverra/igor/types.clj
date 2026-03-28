@@ -4,11 +4,13 @@
 (def Numeric ::numeric)
 (def Set ::set)
 (def Bool ::boolean)
+(def Keyword ::keyword)
 
 (def all-decision-types
   #{Numeric
     Set
-    Bool})
+    Bool
+    Keyword})
 
 (defn domain->type [domain]
   (let [types (keys domain)]

@@ -76,7 +76,9 @@
   (codomain [self] (if-let [type (forced-typed self)]
                      {type ::impl}
                      (zipmap types/all-decision-types (repeat self))))
-  (decisions [self] {self (zipmap types/all-decision-types (repeat self))})
+  (decisions [self] {self (if-let [type (forced-typed self)]
+                           {type self}
+                           (zipmap types/all-decision-types (repeat self)))})
   (bindings [self] (when-let [r (::range (meta self))]
                      {self [r self]}))
   (validate [self] self)
@@ -194,6 +196,27 @@
   (translate [self] (str self))
   (evaluate [self _solution] self))
 
+(defn keyword->mzn-name
+  "Convert a Clojure keyword to a valid MiniZinc enum identifier.
+   :red -> kw_red, :my-color -> kw_my_color, :ns/foo -> kw_ns__foo"
+  [kw]
+  (let [ns-part (namespace kw)
+        name-part (name kw)
+        sanitize #(string/replace % "-" "_")]
+    (if ns-part
+      (str "kw_" (sanitize ns-part) "__" (sanitize name-part))
+      (str "kw_" (sanitize name-part)))))
+
+(extend-protocol protocols/IExpress
+  clojure.lang.Keyword
+  (write [self] self)
+  (codomain [self] {types/Keyword self})
+  (decisions [_self] nil)
+  (bindings [_self] nil)
+  (validate [self] self)
+  (translate [self] (keyword->mzn-name self))
+  (evaluate [self _solution] self))
+
 (extend-protocol protocols/IExpress
   Object
   (write [self] self)
@@ -281,4 +304,11 @@
   (force-type (bind domain (fresh)) types/Numeric))
 
 (defn fresh-set [super]
+  (when (and (seq super) (not (or (every? number? super) (every? keyword? super))))
+    (throw (ex-info "set domain must be homogeneous — all integers or all keywords" {:domain super})))
   (force-type (bind super (fresh)) types/Set))
+
+(defn fresh-keyword [domain]
+  (when-not (every? keyword? domain)
+    (throw (ex-info "keyword domain must contain only keywords" {:domain domain})))
+  (force-type (bind domain (fresh)) types/Keyword))

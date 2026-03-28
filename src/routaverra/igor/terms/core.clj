@@ -20,6 +20,7 @@
   [x]
   (clojure.core/or (number? x)
                    (instance? Boolean x)
+                   (keyword? x)
                    (clojure.core/and (set? x) (clojure.core/every? ground? x))))
 
 (defn translation-error! [self]
@@ -180,7 +181,7 @@
   protocols/IExpress
   (write [_self] (apply list 'all-different (map protocols/write argv)))
   (codomain [self] {types/Bool self})
-  (domainv [self] (take (clojure.core/count argv) (repeat {types/Numeric self})))
+  (domainv [self] (take (clojure.core/count argv) (repeat {types/Numeric self types/Keyword self})))
   (decisions [self] (api/unify-argv-decisions self))
   (bindings [self] (api/unify-argv-bindings self))
   (validate [self] (api/validate-domains self))
@@ -417,7 +418,7 @@
   protocols/IExpress
   (write [_self] (apply list 'contains? (map protocols/write argv)))
   (codomain [self] {types/Bool self})
-  (domainv [self] [{types/Set self} {types/Numeric self}])
+  (domainv [self] [{types/Set self} {types/Numeric self types/Keyword self}])
   (decisions [self] (api/unify-argv-decisions self))
   (bindings [self] (api/unify-argv-bindings self))
   (validate [self] (api/validate-domains self))

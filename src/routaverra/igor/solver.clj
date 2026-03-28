@@ -21,6 +21,46 @@
     (>> {:x var-string}
         "output([\"[{{x}}]\"]);")))
 
+(defn collect-keywords
+  "Collect all keyword values from decision bindings and constraint argv vectors.
+   Only collects keywords that participate as domain values, not structural record keys."
+  [constraint decisions bindings]
+  (let [;; Keywords from decision binding ranges (e.g. fresh-keyword, fresh-set with keywords)
+        from-bindings (->> decisions
+                           keys
+                           (keep #(api/binding-set (get bindings %)))
+                           (mapcat identity)
+                           (filter keyword?)
+                           set)
+        ;; Keywords used as literal values in constraint expressions
+        from-tree (reduce (fn [acc n]
+                            (cond
+                              (and (satisfies? protocols/IExpress n)
+                                   (instance? clojure.lang.IRecord n)
+                                   (:argv n))
+                              (into acc (filter keyword? (:argv n)))
+
+                              (set? n)
+                              (into acc (filter keyword? n))
+
+                              :else acc))
+                          #{}
+                          (tree-seq coll? seq constraint))]
+    (into from-bindings from-tree)))
+
+(defn keyword-enum-declaration
+  "Generate MiniZinc enum declaration for all keywords in the problem."
+  [keywords]
+  (when (seq keywords)
+    (let [sorted-kws (sort keywords)
+          mzn-names (map api/keyword->mzn-name sorted-kws)]
+      (str "enum Keyword = {" (string/join ", " mzn-names) "};"))))
+
+(defn keyword-reverse-lookup
+  "Build a map from MiniZinc enum name string to Clojure keyword."
+  [keywords]
+  (into {} (map (fn [kw] [(api/keyword->mzn-name kw) kw]) keywords)))
+
 (defn decisions->var-declarations [decisions bindings]
   (->> decisions
        (map (fn [[decision domain]]
@@ -47,8 +87,15 @@
                               {}))))
 
                   (= type types/Bool)
-                  (>>* "var bool: {{decision}};")))))
+                  (>>* "var bool: {{decision}};")
+
+                  (= type types/Keyword)
+                  (if set
+                    (>>* "var {{range}}: {{decision}};")
+                    (>>* "var Keyword: {{decision}};"))))))
        sort))
+
+(def ^:dynamic *keyword-lookup* nil)
 
 (defmulti detranspile*
   (fn [decisions [decision _out-str]]
@@ -65,7 +112,20 @@
     (let [[lower upper] (->> (string/split out-str #"\.\.")
                              (map #(Integer/parseInt %)))]
       (apply sorted-set (range lower (+ 1 upper))))
-    (read-string (str "#" out-str))))
+    ;; Set could contain enum values — check and convert
+    (let [elements (-> out-str
+                       (string/replace #"[{}]" "")
+                       string/trim)]
+      (if (string/blank? elements)
+        (sorted-set)
+        (let [parts (map string/trim (string/split elements #","))]
+          (if (every? #(re-matches #"-?[0-9]+" %) parts)
+            (apply sorted-set (map #(Integer/parseInt %) parts))
+            ;; enum values — look up keywords
+            (into #{} (map #(get *keyword-lookup* %) parts))))))))
+
+(defmethod detranspile* types/Keyword [_ [_ out-str]]
+  (get *keyword-lookup* out-str))
 
 (defn detranspile-full
   "Parse MiniZinc output into a full solution map including impl decisions."
@@ -156,31 +216,43 @@
                           api/intersect-domains
                           model-decisions
                           (map api/cacheing-decisions constraints))
+        merged-bindings (apply
+                         api/merge-with-key
+                         (partial api/intersect-bindings "ignore")
+                         (concat (map protocols/bindings constraints)
+                                 (when objective [(protocols/bindings objective)])))
         var-declarations-str (decisions->var-declarations
                               merged-decisions
-                              (apply
-                               api/merge-with-key
-                               (partial api/intersect-bindings "ignore")
-                               (concat (map protocols/bindings constraints)
-                                       (when objective [(protocols/bindings objective)]))))
+                              merged-bindings)
         output-str (->output merged-decisions)
         includes (into (collect-includes constraint-with-forced-decisions-and-expanded-terms)
                        (when objective (collect-includes objective)))
         include-strs (mapv #(str "include \"" % "\";") (sort includes))
-        mzn (apply str (interpose "\n" (cond-> (into include-strs var-declarations-str)
-                                               constraint-str (conj constraint-str)
-                                               :always (conj output-str directive-str))))]
+        ;; Keyword enum support
+        all-keywords (collect-keywords constraint merged-decisions merged-bindings)
+        enum-decl (keyword-enum-declaration all-keywords)
+        kw-lookup (keyword-reverse-lookup all-keywords)
+        mzn-parts (cond-> (into include-strs
+                                (if enum-decl
+                                  (into [enum-decl] var-declarations-str)
+                                  var-declarations-str))
+                    constraint-str (conj constraint-str)
+                    :always (conj output-str directive-str))
+        mzn (apply str (interpose "\n" mzn-parts))]
     (if *debug*
       (do (spit "scratch/mzn" mzn) mzn)
       (let [detranspile-fn (if *validate?*
                              (fn [out-str]
-                               (let [full-solution (detranspile-full merged-decisions out-str)
-                                     valid? (protocols/evaluate constraint full-solution)]
-                                 (when-not valid?
-                                   (throw (ex-info "Solution validation failed: MiniZinc solution does not satisfy the original constraint"
-                                                   {:solution (filter-impl-decisions full-solution)})))
-                                 (filter-impl-decisions full-solution)))
-                             (partial detranspile merged-decisions))]
+                               (binding [*keyword-lookup* kw-lookup]
+                                 (let [full-solution (detranspile-full merged-decisions out-str)
+                                       valid? (protocols/evaluate constraint full-solution)]
+                                   (when-not valid?
+                                     (throw (ex-info "Solution validation failed: MiniZinc solution does not satisfy the original constraint"
+                                                     {:solution (filter-impl-decisions full-solution)})))
+                                   (filter-impl-decisions full-solution))))
+                             (fn [out-str]
+                               (binding [*keyword-lookup* kw-lookup]
+                                 (detranspile merged-decisions out-str))))]
         ((if async?
            adapter/call-async
            adapter/call-sync)

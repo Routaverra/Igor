@@ -19,6 +19,7 @@
 (def fresh-set api/fresh-set)
 (def fresh-int api/fresh-int)
 (def fresh-bool api/fresh-bool)
+(def fresh-keyword api/fresh-keyword)
 (def bind api/bind)
 
 (defn satisfy

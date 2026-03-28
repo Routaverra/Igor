@@ -4,7 +4,7 @@ Constraint programming for Clojure, backed by [MiniZinc](https://www.minizinc.or
 >
 > — Igor Stravinsky, *Poetics of Music*
 
-Igor shadows Clojure's core operators (`+`, `=`, `and`, `every?`, etc.) to produce constraint expressions that are first-class and data-oriented. You declare variables with domains, compose constraints using familiar Clojure syntax, and industrial solvers (Gecode, OR-Tools, etc.) return solutions as plain maps. It supports integer arithmetic, set algebra, universal and existential quantification, extensional constraints (table, regular, cost-regular), and a graph constraint library — paths, spanning trees, circuits, connectivity — all composable and all optimizable via maximize/minimize.
+Igor shadows Clojure's core operators (`+`, `=`, `and`, `every?`, etc.) to produce constraint expressions that are first-class and data-oriented. You declare variables with domains, compose constraints using familiar Clojure syntax, and industrial solvers (Gecode, OR-Tools, etc.) return solutions as plain maps. It supports integer arithmetic, keywords, set algebra, universal and existential quantification, extensional constraints (table, regular, cost-regular), and a graph constraint library — paths, spanning trees, circuits, connectivity — all composable and all optimizable via maximize/minimize.
 
 ## Installation
 
@@ -40,13 +40,14 @@ Igor's operators (`i/+`, `i/=`, `i/and`, etc.) shadow their `clojure.core` count
 
 ## Core Concepts
 
-**Variables** — `fresh-int`, `fresh-bool`, `fresh-set` create typed decision variables. Domains are passed as collections:
+**Variables** — `fresh-int`, `fresh-bool`, `fresh-set`, `fresh-keyword` create typed decision variables. Domains are passed as collections:
 
 ```clojure
-(i/fresh-int (range 10))     ; integer in {0..9}
-(i/fresh-int #{1 3 5 7})     ; integer in {1,3,5,7}
-(i/fresh-bool)               ; boolean
-(i/fresh-set (range 12))     ; subset of {0..11}
+(i/fresh-int (range 10))           ; integer in {0..9}
+(i/fresh-int #{1 3 5 7})           ; integer in {1,3,5,7}
+(i/fresh-bool)                     ; boolean
+(i/fresh-set (range 12))           ; subset of {0..11}
+(i/fresh-keyword #{:red :blue})    ; keyword from a domain of keywords
 ```
 
 **Solving** — `satisfy` returns one solution as `{Decision -> value}`. `satisfy-all` returns all solutions. `maximize` / `minimize` take an objective expression and a constraint:
@@ -181,6 +182,49 @@ Each letter stands for a different digit (0–9). The goal: find the unique digi
 ;; => e.g. #{0 1 3 4 6 7 9 10}
 ```
 
+### Keywords
+
+Keywords let you constrain symbolic values directly — no manual integer encoding. Both namespaced and non-namespaced keywords are supported.
+
+```clojure
+;; Graph coloring: assign colors to nodes so no adjacent pair shares a color
+(let [edges [[0 1] [0 2] [1 2] [1 3] [2 4] [3 4]]
+      colors (vec (repeatedly 5 #(i/fresh-keyword #{:red :green :blue})))
+      sol (i/satisfy
+           (->> edges
+                (map (fn [[u v]] (i/not= (nth colors u) (nth colors v))))
+                (apply i/and)))]
+  (mapv sol colors))
+;; => [:red :green :blue :blue :red]
+```
+
+Keywords work with sets too — `fresh-set` auto-detects keyword domains:
+
+```clojure
+;; Select a subset of features with dependency constraints
+(let [features (i/fresh-set #{:wifi :bluetooth :nfc :gps :lte})
+      sol (i/satisfy (i/and (i/contains? features :wifi)
+                            (i/implies (i/contains? features :lte)
+                                       (i/contains? features :gps))
+                            (i/<= (i/count features) 3)
+                            (i/contains? features :lte)))]
+  (sol features))
+;; => #{:wifi :gps :lte}
+```
+
+Different keyword variables can draw from different domains in the same problem:
+
+```clojure
+;; Product configuration — constraints read like business rules
+(let [color (i/fresh-keyword #{:red :blue :black})
+      trim  (i/fresh-keyword #{:sport :luxury :base})
+      sol (i/satisfy (i/and (i/implies (i/= trim :sport) (i/not= color :blue))
+                            (i/implies (i/= trim :luxury) (i/= color :black))
+                            (i/= trim :sport)))]
+  {:color (sol color) :trim (sol trim)})
+;; => {:color :red, :trim :sport}
+```
+
 ### Graph: Shortest Path
 
 You define a graph as an edge list, then apply structural constraints — paths, trees, connectivity, circuits — and the solver finds subgraphs that satisfy them. The solver selects which nodes and edges are "active"; you read the result with `active-nodes` and `active-edges`.
@@ -283,7 +327,8 @@ In the tables below, `T` denotes a polymorphic type and `*` denotes variadic (tw
 |----------|-------------|
 | `fresh-int` | `(fresh-int domain)` — integer variable |
 | `fresh-bool` | `(fresh-bool)` — boolean variable |
-| `fresh-set` | `(fresh-set universe)` — set variable (subset of universe) |
+| `fresh-set` | `(fresh-set universe)` — set variable; universe can be integers or keywords |
+| `fresh-keyword` | `(fresh-keyword domain)` — keyword variable from a set of keywords |
 
 ### Arithmetic
 
@@ -306,8 +351,8 @@ In the tables below, `T` denotes a polymorphic type and `*` denotes variadic (tw
 
 | Operator | Description | Input | Output | Shadows |
 |----------|-------------|-------|--------|---------|
-| `=` | Equality (also accepts Bool, Set) | polymorphic* | Bool | `clojure.core` |
-| `not=` | Inequality (also accepts Bool, Set) | polymorphic* | Bool | `clojure.core` |
+| `=` | Equality (Numeric, Bool, Set, or Keyword) | polymorphic* | Bool | `clojure.core` |
+| `not=` | Inequality (Numeric, Bool, Set, or Keyword) | polymorphic* | Bool | `clojure.core` |
 | `>` | Greater than | Numeric* | Bool | `clojure.core` |
 | `<` | Less than | Numeric* | Bool | `clojure.core` |
 | `>=` | Greater than or equal | Numeric* | Bool | `clojure.core` |
@@ -321,8 +366,8 @@ In the tables below, `T` denotes a polymorphic type and `*` denotes variadic (tw
 | `or` | Disjunction | Bool* | Bool | `clojure.core` |
 | `not` | Negation | Bool | Bool | `clojure.core` |
 | `implies` | Implication (test -> body) | Bool, Bool | Bool | — |
-| `every?` | `(every? set-expr (fn [elem] bool-expr))` — universal quantification | Set, (Numeric -> Bool) | Bool | `clojure.core` |
-| `some` | `(some set-expr (fn [elem] bool-expr))` — existential quantification | Set, (Numeric -> Bool) | Bool | `clojure.core` |
+| `every?` | `(every? set-expr (fn [elem] bool-expr))` — universal quantification | Set, (T -> Bool) | Bool | `clojure.core` |
+| `some` | `(some set-expr (fn [elem] bool-expr))` — existential quantification | Set, (T -> Bool) | Bool | `clojure.core` |
 
 ### Predicates
 
@@ -349,8 +394,8 @@ In the tables below, `T` denotes a polymorphic type and `*` denotes variadic (tw
 |----------|-------------|-------|--------|---------|
 | `nth` | Index into a vector of expressions | [T...], Numeric | T | `clojure.core` |
 | `count` | Set cardinality | Set | Numeric | `clojure.core` |
-| `contains?` | Set membership | Set, Numeric | Bool | `clojure.core` |
-| `all-different` | All arguments must take distinct values | Numeric* | Bool | — |
+| `contains?` | Set membership | Set, Numeric/Keyword | Bool | `clojure.core` |
+| `all-different` | All arguments must take distinct values | Numeric/Keyword* | Bool | — |
 
 ### Set Operations
 
@@ -499,7 +544,7 @@ Both are constraint programming tools for Clojure; they target different problem
 |-|------|------------|
 | Engine | Compiles to MiniZinc; solves via Gecode, OR-Tools, etc. | miniKanren + CLP(FD) search in Clojure |
 | Solutions | One map via `satisfy`, all via `satisfy-all` | Lazy stream |
-| Types | Int, Bool, Set (typed variables) | Untyped logic vars |
+| Types | Int, Bool, Set, Keyword (typed variables) | Untyped logic vars |
 | Arithmetic | `+` `-` `*` `/` `mod` `rem` `abs` `min` `max` `inc` `dec` `pow` | `fd/+` `fd/-` only |
 | Global constraints | `all-different`, `regular`, `cost-regular`, `table`, graph library | No |
 | Optimization | `maximize` / `minimize` | No |

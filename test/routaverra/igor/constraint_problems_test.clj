@@ -482,6 +482,22 @@
       ;; All colors in valid range
       (is (every? #(<= 0 % 2) colors*)))))
 
+(deftest graph-coloring-keyword-test
+  (testing "graph coloring with keywords instead of integer encoding"
+    (let [edges [[0 1] [0 2] [1 2] [1 3] [2 4] [3 4]]
+          n 5
+          color-domain #{:red :green :blue}
+          colors (vec (repeatedly n #(i/fresh-keyword color-domain)))
+          edge-constraints (->> edges
+                                (map (fn [[u v]] (i/not= (nth colors u) (nth colors v))))
+                                (apply i/and))
+          sol (i/satisfy edge-constraints)
+          colors* (mapv sol colors)]
+      ;; Verify no adjacent pair shares a color
+      (is (every? (fn [[u v]] (not= (nth colors* u) (nth colors* v))) edges))
+      ;; All colors are valid keywords
+      (is (every? color-domain colors*)))))
+
 ;; ============================================================
 ;; 11. Scheduling problems
 ;; ============================================================
@@ -801,3 +817,130 @@
       (is (<= (+ a* (* 2 b*)) 12))
       ;; Optimal profit is 32 (a=4, b=4)
       (is (= 32 profit*)))))
+
+;; ============================================================
+;; Constructed language grammar
+;; ============================================================
+
+(deftest conlang-sentence-test
+  (testing "generate valid sentences in a simple constructed language"
+    ;; A constructed language with Subject-Verb-Object word order.
+    ;; Vocabulary:
+    ;;   Animate nouns: :wolf :raven :fox
+    ;;   Inanimate nouns: :stone :river :fire
+    ;;   Transitive verbs: :hunts :guards :fears :watches
+    ;; Rules:
+    ;;   1. Subject must be animate (inanimate things don't act)
+    ;;   2. Subject and object must be different words
+    ;;   3. :fears requires an animate object (you fear living things)
+    ;;   4. :guards requires an inanimate object (you guard things)
+    (let [animate #{:wolf :raven :fox}
+          inanimate #{:stone :river :fire}
+          nouns (into animate inanimate)
+          verbs #{:hunts :guards :fears :watches}
+          subject (i/fresh-keyword nouns)
+          verb (i/fresh-keyword verbs)
+          object (i/fresh-keyword nouns)
+          grammar (i/and
+                   ;; Rule 1: subject must be animate
+                   (i/contains? animate subject)
+                   ;; Rule 2: no reflexive sentences
+                   (i/not= subject object)
+                   ;; Rule 3: fears requires animate object
+                   (i/implies (i/= verb :fears)
+                              (i/contains? animate object))
+                   ;; Rule 4: guards requires inanimate object
+                   (i/implies (i/= verb :guards)
+                              (i/contains? inanimate object)))
+          sol (i/satisfy grammar)
+          s (sol subject) v (sol verb) o (sol object)]
+      ;; Verify all rules
+      (is (contains? animate s) "subject is animate")
+      (is (contains? verbs v) "verb is valid")
+      (is (contains? nouns o) "object is valid")
+      (is (not= s o) "no reflexive")
+      (when (= v :fears) (is (contains? animate o) "fears animate"))
+      (when (= v :guards) (is (contains? inanimate o) "guards inanimate")))))
+
+(deftest conlang-all-sentences-test
+  (testing "enumerate all valid sentences"
+    (let [animate #{:wolf :raven :fox}
+          inanimate #{:stone :river :fire}
+          nouns (into animate inanimate)
+          verbs #{:hunts :guards :fears :watches}
+          subject (i/fresh-keyword nouns)
+          verb (i/fresh-keyword verbs)
+          object (i/fresh-keyword nouns)
+          grammar (i/and
+                   (i/contains? animate subject)
+                   (i/not= subject object)
+                   (i/implies (i/= verb :fears)
+                              (i/contains? animate object))
+                   (i/implies (i/= verb :guards)
+                              (i/contains? inanimate object)))]
+      ;; Count all valid sentences
+      (let [solutions (i/satisfy-all grammar)
+            sentences (map (fn [sol] [(sol subject) (sol verb) (sol object)]) solutions)]
+        ;; 3 animate subjects x 4 verbs x 5 objects (minus self) = 60 base
+        ;; but :fears restricts object to 2 animate others = 3*1*2 = 6
+        ;; and :guards restricts object to 3 inanimate = 3*1*3 = 9
+        ;; :hunts and :watches allow 5 non-self objects each = 3*2*5 = 30
+        ;; total = 6 + 9 + 30 = 45
+        (is (= 45 (count sentences)))
+        ;; Every sentence satisfies the grammar
+        (is (every? (fn [[s v o]]
+                      (and (contains? animate s)
+                           (not= s o)
+                           (if (= v :fears) (contains? animate o) true)
+                           (if (= v :guards) (contains? inanimate o) true)))
+                    sentences))))))
+
+(deftest conlang-phonotactics-test
+  (testing "generate valid words with phonotactic constraints"
+    ;; A constructed language with vowel harmony and syllable structure.
+    ;; Syllable = Consonant + Vowel
+    ;; Vowel harmony: all vowels must be from the same class
+    ;;   Front vowels: :e :i
+    ;;   Back vowels: :a :o :u
+    ;; Consonant constraints: no identical adjacent consonants
+    (let [consonants #{:k :t :n :m :s :l}
+          front-vowels #{:e :i}
+          back-vowels #{:a :o :u}
+          vowels (into front-vowels back-vowels)
+          ;; 3-syllable word: c1 v1 c2 v2 c3 v3
+          c1 (i/fresh-keyword consonants)
+          v1 (i/fresh-keyword vowels)
+          c2 (i/fresh-keyword consonants)
+          v2 (i/fresh-keyword vowels)
+          c3 (i/fresh-keyword consonants)
+          v3 (i/fresh-keyword vowels)
+          ;; Harmony class selector
+          harmony (i/fresh-keyword #{:front :back})
+          phonotactics
+          (i/and
+           ;; Vowel harmony: all vowels from same class
+           (i/implies (i/= harmony :front)
+                      (i/and (i/contains? front-vowels v1)
+                             (i/contains? front-vowels v2)
+                             (i/contains? front-vowels v3)))
+           (i/implies (i/= harmony :back)
+                      (i/and (i/contains? back-vowels v1)
+                             (i/contains? back-vowels v2)
+                             (i/contains? back-vowels v3)))
+           ;; No identical adjacent consonants
+           (i/not= c1 c2)
+           (i/not= c2 c3))
+          sol (i/satisfy phonotactics)
+          word [(sol c1) (sol v1) (sol c2) (sol v2) (sol c3) (sol v3)]
+          vs [(sol v1) (sol v2) (sol v3)]
+          cs [(sol c1) (sol c2) (sol c3)]]
+      ;; All vowels from same harmony class
+      (is (or (every? front-vowels vs)
+              (every? back-vowels vs))
+          "vowel harmony")
+      ;; No adjacent consonant repetition
+      (is (not= (nth cs 0) (nth cs 1)) "no adjacent repeated consonants")
+      (is (not= (nth cs 1) (nth cs 2)) "no adjacent repeated consonants")
+      ;; All segments are valid
+      (is (every? consonants cs))
+      (is (every? vowels vs)))))
