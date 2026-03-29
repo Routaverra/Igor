@@ -13,6 +13,7 @@
             [routaverra.igor.extensional :as extensional]
             [routaverra.igor.notation :as notation]
             [routaverra.igor.alternatives :as alternatives]
+            [routaverra.igor.soft :as soft]
             [clojure.walk :as walk]))
 
 (def fresh api/fresh)
@@ -155,3 +156,8 @@
 
 (def alternatives alternatives/alternatives)
 (def choice alternatives/choice)
+
+;; --- Soft constraints ---
+
+(def soft soft/soft)
+(def violation soft/violation)

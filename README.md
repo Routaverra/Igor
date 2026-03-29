@@ -437,6 +437,32 @@ The handle returned by `alternatives` is a constraint — pass it directly to `s
 ;; => {:branch 1, :x 91, :y 91}  — forced branch 1 via label constraint
 ```
 
+### Soft Constraints
+
+`soft` wraps a constraint so it can be violated at a cost. The solver satisfies it when possible and pays the penalty when not. Use `violation` to get the cost variable (0 when satisfied, penalty when violated), then minimize total violation across soft constraints.
+
+| Function | Description | Input | Output | Shadows |
+|----------|-------------|-------|--------|---------|
+| `soft` | `(soft constraint penalty)` — penalty can be a number or decision variable | Bool, Numeric | Handle | — |
+| `violation` | `(violation handle)` — cost variable: 0 when satisfied, penalty when violated | Handle | Decision | — |
+
+```clojure
+;; Schedule preferences: prefer morning, prefer short meetings, but not always possible
+(let [start (i/fresh-int (range 8 18))
+      duration (i/fresh-int #{1 2 4})
+      ;; Soft: prefer starting before 10 (penalty 20)
+      early (i/soft (i/< start 10) 20)
+      ;; Soft: prefer short meetings (penalty 10)
+      short (i/soft (i/<= duration 1) 10)
+      ;; Hard: meeting must end by 12
+      hard (i/<= (i/+ start duration) 12)
+      total-cost (i/+ (i/violation early) (i/violation short))
+      sol (i/minimize total-cost (i/and hard early short))]
+  {:start (sol start) :duration (sol duration)
+   :cost (sol total-cost)})
+;; => {:start 8, :duration 1, :cost 0}  — both preferences satisfied
+```
+
 ### Extensional Constraints
 
 These constrain variables by enumerating valid assignments rather than expressing them as arithmetic/logical formulas.
