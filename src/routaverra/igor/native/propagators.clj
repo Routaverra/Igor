@@ -1,9 +1,11 @@
 (ns routaverra.igor.native.propagators
   (:require [routaverra.igor.native.domains :as domains]
+            [routaverra.igor.native.globals :as globals]
             [routaverra.igor.api :as api]
             [routaverra.igor.types :as types]
             [routaverra.igor.protocols :as protocols]
-            [routaverra.igor.terms.core :as terms])
+            [routaverra.igor.terms.core :as terms]
+            [routaverra.igor.extensional :as extensional])
   (:import [routaverra.igor.terms.core
             TermPlus TermProduct TermMinus TermDivide
             TermInc TermDec TermMax TermMin TermAbs TermPow
@@ -14,7 +16,8 @@
             TermRem TermMod
             TermTrue? TermFalse? TermPos? TermNeg? TermZero?
             TermContains TermCount TermNth
-            TermEven? TermOdd?]))
+            TermEven? TermOdd?]
+           [routaverra.igor.extensional TermTable]))
 
 ;; ---- Helpers ----
 
@@ -336,34 +339,11 @@
                           (decision? a) (safe-restrict-max a bhi)
                           (decision? b) (safe-restrict-min b alo))))}]))
 
-;; ---- AllDifferent (decompose to pairwise !=) ----
+;; ---- AllDifferent (bounds consistency via Hall intervals) ----
 
 (defmethod compile-constraint TermAllDifferent [term kw-map]
-  (let [vars (:argv term)
-        decisions (filter decision? vars)]
-    (for [i (range (count decisions))
-          j (range (inc i) (count decisions))
-          :let [a (nth decisions i)
-                b (nth decisions j)]]
-      {:id (gensym "alldiff-neq-")
-       :vars #{a b}
-       :events {a #{:assigned} b #{:assigned}}
-       :priority 1
-       :propagate-fn (fn [store]
-                       (let [da (get store a) db (get store b)]
-                         (cond
-                           (and (domains/assigned? da) (domains/assigned? db))
-                           (if (= (domains/domain-min da) (domains/domain-min db))
-                             ::domains/failed
-                             store)
-
-                           (domains/assigned? da)
-                           (safe-remove-value store b (domains/domain-min da))
-
-                           (domains/assigned? db)
-                           (safe-remove-value store a (domains/domain-min db))
-
-                           :else store)))})))
+  (let [decisions (vec (filter decision? (:argv term)))]
+    [(globals/alldifferent-propagator decisions)]))
 
 ;; ---- Boolean literal at root level ----
 
@@ -1050,10 +1030,16 @@
      :propagate-fn (fn [store] (safe-restrict-min store z 1))}]
    (compile-constraint term kw-map)))
 
+;; ---- Table constraint ----
+
+(defmethod compile-constraint TermTable [term kw-map]
+  (let [decisions (vec (filter decision? (:argv term)))]
+    [(globals/table-propagator decisions (:tuples term) kw-map)]))
+
 ;; ---- Fallback for unsupported terms ----
 
 (defmethod compile-constraint :default [term kw-map]
-  ;; For terms we don't handle (e.g., set operations, extensional),
+  ;; For terms we don't handle (e.g., set operations, regular/cost-regular),
   ;; return empty — they won't propagate but won't crash either.
   ;; The search will need to find solutions by enumeration.
   [])

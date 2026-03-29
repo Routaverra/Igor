@@ -290,3 +290,35 @@
       (is (= 6 (count sols)))
       (doseq [sol sols]
         (is (= 3 (count (distinct [(get sol x) (get sol y) (get sol z)]))))))))
+
+;; ============================================================
+;; Table constraint (Phase 4)
+;; ============================================================
+
+(deftest table-basic-native-test
+  (testing "table constrains vars to one of the allowed tuples"
+    (let [x1 (i/fresh-int (range 10))
+          x2 (i/fresh-int (range 10))
+          x3 (i/fresh-int (range 10))
+          allowed [[1 2 3] [4 5 6] [7 8 9]]
+          result (i/solve (i/table [x1 x2 x3] allowed) [x1 x2 x3])]
+      (is (some? result))
+      (is (some #{result} allowed)))))
+
+(deftest table-all-solutions-native-test
+  (testing "table finds all matching tuples"
+    (let [x (i/fresh-int (range 10))
+          y (i/fresh-int (range 10))
+          allowed [[1 2] [3 4] [5 6]]
+          sols (i/satisfy-all (i/table [x y] allowed) native)]
+      (is (= 3 (count sols)))
+      (is (= (set allowed)
+             (set (map (fn [sol] [(get sol x) (get sol y)]) sols)))))))
+
+(deftest table-cross-validate-test
+  (testing "table gives same results on both backends"
+    (let [x (i/fresh-int (range 10))
+          y (i/fresh-int (range 10))
+          z (i/fresh-int (range 10))
+          allowed [[1 2 3] [4 5 6] [7 8 9]]]
+      (verify-both-backends (i/table [x y z] allowed) :all? true))))
