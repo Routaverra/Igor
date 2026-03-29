@@ -18,6 +18,11 @@
 
 (defn update-sub-map [substitutions node]
   (let [preserve? (or
+                   (api/decision? node)
+                   ;; bare Decisions are leaf values — substituting them causes
+                   ;; postwalk key mismatches when the same Decision appears in
+                   ;; multiple sibling terms
+
                    (some api/lexical-decision? (keys (api/cacheing-decisions node)))
 
                    (contains? substitutions node)
