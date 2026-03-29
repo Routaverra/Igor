@@ -7,7 +7,9 @@
             [clojure.spec.alpha :as spec]
             [routaverra.igor.utils.log :as log]
             [routaverra.igor.adapter :as adapter]
-            [routaverra.igor.utils.string :refer [>>]]))
+            [routaverra.igor.utils.string :refer [>>]]
+            [routaverra.igor.terms.core :as terms]
+            [routaverra.igor.native.engine :as native]))
 
 (def ^:dynamic *debug* false)
 (def ^:dynamic *validate?* false)
@@ -167,13 +169,11 @@
 
 (def ^:dynamic *flatten?* true)
 
-(defn solve [{:keys [all? async? direction] :as opts}
-             constraint
-             objective]
-  {:pre [(some? constraint)
-         (contains? (protocols/codomain constraint) types/Bool)
-         (or (nil? objective) (contains? (protocols/codomain objective) types/Numeric))
-         (or (nil? direction) (#{:maximize :minimize} direction))]}
+(defn prepare-model
+  "Shared model preparation used by both MiniZinc and native backends.
+   Returns a map with :constraints, :merged-decisions, :merged-bindings,
+   :objective-var, :direction, :all-keywords, and the expanded constraint."
+  [{:keys [all? async? direction] :as opts} constraint objective]
   (let [model-decisions (api/merge-with-key
                          api/intersect-domains
                          (api/cacheing-decisions constraint)
@@ -197,20 +197,18 @@
                              (if *flatten?*
                                (flattener/conjuctive-flattening objective)
                                [objective]))
-        directive-str (if objective
-                        (>> {:e (protocols/translate obj)
-                             :d (name (or direction :maximize))}
-                            "solve {{d}} {{e}};")
-                        "solve satisfy;")
+        ;; Ensure objective is a Decision (introduce one if flattening left a term)
+        [obj obj-consts] (if (and obj (not (api/decision? obj)))
+                           (let [type (types/domain->type (protocols/codomain obj))
+                                 impl (-> (api/->Decision (str "introduced" (gensym)))
+                                          (api/force-type type)
+                                          api/impl)]
+                             [impl (cons (terms/->TermEquals [obj impl]) obj-consts)])
+                           [obj obj-consts])
         constraints (if *flatten?*
                       (concat (flattener/conjuctive-flattening constraint-with-forced-decisions-and-expanded-terms)
                               obj-consts)
                       [constraint-with-forced-decisions-and-expanded-terms])
-        constraint-str (->> constraints
-                            (map (fn [constraint] (>> {:e (protocols/translate constraint)}
-                                                      "constraint {{e}};")))
-                            (interpose "\n")
-                            (apply str))
         merged-decisions (apply
                           api/merge-with-key
                           api/intersect-domains
@@ -221,15 +219,38 @@
                          (partial api/intersect-bindings "ignore")
                          (concat (map protocols/bindings constraints)
                                  (when objective [(protocols/bindings objective)])))
+        all-keywords (collect-keywords constraint merged-decisions merged-bindings)]
+    {:constraints constraints
+     :merged-decisions merged-decisions
+     :merged-bindings merged-bindings
+     :objective-var obj
+     :direction (or direction (when objective :maximize))
+     :all-keywords all-keywords
+     :expanded-constraint constraint-with-forced-decisions-and-expanded-terms}))
+
+(defn solve-minizinc
+  "MiniZinc backend: generate .mzn source and shell out to minizinc."
+  [{:keys [all? async?] :as opts}
+   {:keys [constraints merged-decisions merged-bindings
+           objective-var direction all-keywords
+           expanded-constraint] :as model}]
+  (let [directive-str (if objective-var
+                        (>> {:e (protocols/translate objective-var)
+                             :d (name direction)}
+                            "solve {{d}} {{e}};")
+                        "solve satisfy;")
+        constraint-str (->> constraints
+                            (map (fn [constraint] (>> {:e (protocols/translate constraint)}
+                                                      "constraint {{e}};")))
+                            (interpose "\n")
+                            (apply str))
         var-declarations-str (decisions->var-declarations
                               merged-decisions
                               merged-bindings)
         output-str (->output merged-decisions)
-        includes (into (collect-includes constraint-with-forced-decisions-and-expanded-terms)
-                       (when objective (collect-includes objective)))
+        includes (into (collect-includes expanded-constraint)
+                       (when objective-var (collect-includes objective-var)))
         include-strs (mapv #(str "include \"" % "\";") (sort includes))
-        ;; Keyword enum support
-        all-keywords (collect-keywords constraint merged-decisions merged-bindings)
         enum-decl (keyword-enum-declaration all-keywords)
         kw-lookup (keyword-reverse-lookup all-keywords)
         mzn-parts (cond-> (into include-strs
@@ -245,7 +266,7 @@
                              (fn [out-str]
                                (binding [*keyword-lookup* kw-lookup]
                                  (let [full-solution (detranspile-full merged-decisions out-str)
-                                       valid? (protocols/evaluate constraint full-solution)]
+                                       valid? (protocols/evaluate (first constraints) full-solution)]
                                    (when-not valid?
                                      (throw (ex-info "Solution validation failed: MiniZinc solution does not satisfy the original constraint"
                                                      {:solution (filter-impl-decisions full-solution)})))
@@ -259,3 +280,15 @@
          all?
          mzn
          detranspile-fn)))))
+
+(defn solve [{:keys [solver] :as opts :or {solver :minizinc}}
+             constraint
+             objective]
+  {:pre [(some? constraint)
+         (contains? (protocols/codomain constraint) types/Bool)
+         (or (nil? objective) (contains? (protocols/codomain objective) types/Numeric))
+         (or (nil? (:direction opts)) (#{:maximize :minimize} (:direction opts)))]}
+  (let [model (prepare-model opts constraint objective)]
+    (case solver
+      :minizinc (solve-minizinc opts model)
+      :native (native/solve-native opts model))))
