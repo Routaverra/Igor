@@ -32,6 +32,11 @@
                    (satisfies? protocols/IInclude node)
                    ;; global constraints (regular, cost_regular, table, graph constraints)
                    ;; must not be reified — keep them inline in conjunctions
+
+                   (some #(satisfies? protocols/IInclude %)
+                         (tree-seq #(some? (:argv %)) :argv node))
+                   ;; also preserve if any descendant is IInclude — substituting
+                   ;; this node would indirectly reify the IInclude descendant
                    )]
     (if preserve?
       substitutions

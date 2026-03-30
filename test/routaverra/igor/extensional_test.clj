@@ -373,3 +373,83 @@
       ;; --- Verify cost is bound and positive ---
       (is (pos? (get solution cp-cost))
           "Leap cost should be positive (some motion required)"))))
+
+;; ============================================================
+;; Indirect reification tests
+;; ============================================================
+;;
+;; Global constraints (regular, table, cost_regular) cannot be reified
+;; in MiniZinc. The flattener prevents direct reification, but nesting
+;; inside intermediate conjunctions used to cause indirect reification.
+;; These tests verify the fix: nesting IInclude nodes inside (and ...)
+;; should work identically to flat conjunctions.
+;;
+;; See specs/indirect-reification-of-global-constraints.md
+
+(deftest regular-nested-and-test
+  (testing "regular inside a nested (and ...) solves correctly"
+    (let [vars (vec (repeatedly 4 #(i/fresh-int #{0 1})))
+          dfa {:states 2 :alphabet #{0 1}
+               :transitions [{0 0, 1 1} {0 0}]
+               :start 0 :accept #{0 1}}
+          ;; Nested: regular inside an inner (and ...)
+          inner (i/and (i/regular vars dfa)
+                       (i/= (first vars) 1))
+          outer (i/and inner (i/= (last vars) 0))
+          solution (i/satisfy outer)]
+      (is (some? solution) "nested regular should not cause reification error")
+      (is (= 1 (solution (first vars))) "first var forced to 1")
+      (is (= 0 (solution (last vars))) "last var forced to 0")
+      ;; Verify no adjacent 1s (DFA property)
+      (let [vals (mapv solution vars)]
+        (doseq [i (range (dec (count vals)))]
+          (is (not (and (= 1 (nth vals i)) (= 1 (nth vals (inc i)))))
+              (str "no adjacent stress at positions " i " and " (inc i)))))))
+
+  (testing "regular nested two levels deep"
+    (let [vars (vec (repeatedly 3 #(i/fresh-int #{0 1})))
+          dfa {:states 2 :alphabet #{0 1}
+               :transitions [{0 0, 1 1} {0 0}]
+               :start 0 :accept #{0 1}}
+          ;; Two levels of nesting
+          inner (i/and (i/regular vars dfa)
+                       (i/= (first vars) 1))
+          middle (i/and inner (i/= (second vars) 0))
+          outer (i/and middle (i/= (last vars) 1))
+          solution (i/satisfy outer)]
+      (is (some? solution) "doubly-nested regular should solve")
+      (is (= [1 0 1] (mapv solution vars))))))
+
+(deftest table-nested-and-test
+  (testing "table inside a nested (and ...) solves correctly"
+    (let [x (i/fresh-int (range 5))
+          y (i/fresh-int (range 5))
+          tuples [[1 2] [3 4]]
+          inner (i/and (i/table [x y] tuples)
+                       (i/= x 3))
+          outer (i/and inner (i/> y 3))
+          solution (i/satisfy outer)]
+      (is (some? solution) "nested table should not cause reification error")
+      (is (= 3 (solution x)))
+      (is (= 4 (solution y))))))
+
+(deftest table-keyword-test
+  (testing "table with keyword-typed vars"
+    (let [w (i/fresh-keyword #{:cat :dog :bird})
+          s (i/fresh-keyword #{:small :big})
+          tuples [[:cat :small] [:dog :big] [:bird :small]]
+          solution (i/satisfy (i/table [w s] tuples))]
+      (is (some? solution))
+      (is (contains? (set tuples) [(solution w) (solution s)]))))
+
+  (testing "table with keyword vars inside nested and"
+    (let [w (i/fresh-keyword #{:cat :dog :bird})
+          s (i/fresh-keyword #{:small :big})
+          tuples [[:cat :small] [:dog :big] [:bird :small]]
+          inner (i/and (i/table [w s] tuples)
+                       (i/= w :dog))
+          outer (i/and inner (i/= s :big))
+          solution (i/satisfy outer)]
+      (is (some? solution) "nested keyword table should solve")
+      (is (= :dog (solution w)))
+      (is (= :big (solution s))))))

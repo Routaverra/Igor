@@ -61,14 +61,14 @@
   protocols/IExpress
   (write [_self] (list 'table (map protocols/write argv)))
   (codomain [self] {types/Bool self})
-  (domainv [self] (repeat (count argv) {types/Numeric self}))
+  (domainv [self] (repeat (count argv) {types/Numeric self types/Keyword self}))
   (decisions [self] (api/unify-argv-decisions self))
   (bindings [self] (api/unify-argv-bindings self))
   (validate [self] (api/validate-domains self))
   (translate [self]
     (let [n-tuples (count (:tuples self))
           n-vars (count (:argv self))
-          flat (apply concat (:tuples self))]
+          flat (map protocols/translate (apply concat (:tuples self)))]
       (str "table("
            (terms/to-literal-array (map protocols/translate (:argv self)))
            ", "
