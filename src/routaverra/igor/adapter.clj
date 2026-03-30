@@ -25,15 +25,16 @@
               x)))))))
 
 (defmulti call-minizinc
-  (fn [env _chan _mzn _all?] env))
+  (fn [env _chan _mzn _all? _opts] env))
 
 (defmethod call-minizinc :clj
-  [_env chan mzn all?]
+  [_env chan mzn all? {:keys [timeout-ms]}]
   (let [temp-file (doto (java.io.File/createTempFile "igor" ".mzn") .deleteOnExit)
         _ (spit temp-file mzn)
         args (cond-> ["minizinc"]
-               all? (conj "-a")
-               :always (conj (.getAbsolutePath temp-file)))
+               all?       (conj "-a")
+               timeout-ms (conj "--time-limit" (str timeout-ms))
+               :always    (conj (.getAbsolutePath temp-file)))
         proc (.exec
               (Runtime/getRuntime)
               (into-array String args))]
@@ -51,9 +52,9 @@
       (async/close! chan))))
 
 (defn call-sync
-  [all? mzn xfn]
+  [all? mzn xfn & {:keys [timeout-ms]}]
   (let [chan (filtering-chan xfn)
-        _ (future (call-minizinc (env) chan mzn all?))
+        _ (future (call-minizinc (env) chan mzn all? {:timeout-ms timeout-ms}))
         solutions (async/<!!
                    (async/go-loop [solutions []]
                      (if-let [solution (async/<! chan)]
@@ -65,7 +66,7 @@
     (if all? solutions (first solutions))))
 
 (defn call-async
-  [all? mzn xfn]
+  [all? mzn xfn & {:keys [timeout-ms]}]
   (let [chan (filtering-chan xfn)]
-    (future (call-minizinc (env) chan mzn all?))
+    (future (call-minizinc (env) chan mzn all? {:timeout-ms timeout-ms}))
     chan))

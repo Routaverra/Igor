@@ -258,4 +258,5 @@
            adapter/call-sync)
          all?
          mzn
-         detranspile-fn)))))
+         detranspile-fn
+         :timeout-ms (:timeout-ms opts))))))
