@@ -42,19 +42,23 @@
                 out-reader (BufferedReader. (InputStreamReader. stdout))
                 stderr (.getErrorStream proc)
                 err-writer (StringWriter.)]
-      (doseq [line (line-seq out-reader)]
-        (async/>!! chan line))
-      (clojure.java.io/copy stderr err-writer)
-      (let [exit (.waitFor proc)
-            error (.toString err-writer)]
-        (when (not= exit 0)
-          (async/>!! chan {::error error})))
-      (async/close! chan))))
+      (let [complete? (reduce (fn [complete? line]
+                                (async/>!! chan line)
+                                (or complete? (string/includes? line "==========")))
+                              false
+                              (line-seq out-reader))]
+        (clojure.java.io/copy stderr err-writer)
+        (let [exit (.waitFor proc)
+              error (.toString err-writer)]
+          (when (not= exit 0)
+            (async/>!! chan {::error error})))
+        (async/close! chan)
+        complete?))))
 
 (defn call-sync
   [all? mzn xfn & {:keys [timeout-ms]}]
   (let [chan (filtering-chan xfn)
-        _ (future (call-minizinc (env) chan mzn all? {:timeout-ms timeout-ms}))
+        fut (future (call-minizinc (env) chan mzn all? {:timeout-ms timeout-ms}))
         solutions (async/<!!
                    (async/go-loop [solutions []]
                      (if-let [solution (async/<! chan)]
@@ -62,11 +66,14 @@
                         (when (::error solution)
                           (throw (ex-info (::error solution) {})))
                         (recur (conj solutions solution)))
-                       solutions)))]
-    (if all? solutions (first solutions))))
+                       solutions)))
+        complete? @fut]
+    {:result (if all? solutions (first solutions))
+     :complete? complete?}))
 
 (defn call-async
   [all? mzn xfn & {:keys [timeout-ms]}]
-  (let [chan (filtering-chan xfn)]
-    (future (call-minizinc (env) chan mzn all? {:timeout-ms timeout-ms}))
-    chan))
+  (let [chan (filtering-chan xfn)
+        complete? (promise)]
+    (future (deliver complete? (call-minizinc (env) chan mzn all? {:timeout-ms timeout-ms})))
+    {:chan chan :complete? complete?}))

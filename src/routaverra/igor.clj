@@ -14,6 +14,7 @@
             [routaverra.igor.notation :as notation]
             [routaverra.igor.alternatives :as alternatives]
             [routaverra.igor.soft :as soft]
+            [routaverra.igor.cache :as cache]
             [clojure.walk :as walk]))
 
 (def fresh api/fresh)
@@ -153,6 +154,10 @@
    Returns true if the solution satisfies the constraint, false otherwise."
   [constraint solution]
   (protocols/evaluate constraint solution))
+
+;; --- Cache ---
+
+(def clear-cache! cache/clear!)
 
 ;; --- Constructive disjunction ---
 

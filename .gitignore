@@ -1,6 +1,7 @@
 scratch/
 .cpcache/
 .claude/
+.igor/
 .nrepl-port
 target/
 *.class

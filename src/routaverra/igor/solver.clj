@@ -3,8 +3,10 @@
             [routaverra.igor.flattener :as flattener]
             [routaverra.igor.protocols :as protocols]
             [routaverra.igor.types :as types]
+            [routaverra.igor.cache :as cache]
             [clojure.string :as string]
             [clojure.spec.alpha :as spec]
+            [clojure.core.async :as async]
             [routaverra.igor.utils.log :as log]
             [routaverra.igor.adapter :as adapter]
             [routaverra.igor.utils.string :refer [>>]]))
@@ -156,54 +158,49 @@
    node))
 
 (defn collect-includes [node]
-  (let [includes (atom #{})]
-    (clojure.walk/prewalk
-     (fn [n]
-       (when (satisfies? protocols/IInclude n)
-         (swap! includes into (protocols/mzn-includes n)))
-       n)
-     node)
-    @includes))
+  (reduce (fn [acc n]
+            (if (satisfies? protocols/IInclude n)
+              (into acc (protocols/mzn-includes n))
+              acc))
+          #{}
+          (tree-seq coll? seq node)))
 
 (def ^:dynamic *flatten?* true)
 
-(defn solve [{:keys [all? async? direction] :as opts}
-             constraint
-             objective]
-  {:pre [(some? constraint)
-         (contains? (protocols/codomain constraint) types/Bool)
-         (or (nil? objective) (contains? (protocols/codomain objective) types/Numeric))
-         (or (nil? direction) (#{:maximize :minimize} direction))]}
+(defn- solve-mzn
+  "Generate MiniZinc and invoke the solver. Returns adapter result map:
+   sync → {:result <solution-map | nil | vec-of-maps>, :complete? bool}
+   async → {:chan <core.async channel>, :complete? <promise of bool>}"
+  [{:keys [all? async?] :as opts} constraint objective]
   (let [model-decisions (api/merge-with-key
                          api/intersect-domains
                          (api/cacheing-decisions constraint)
                          (when objective (api/cacheing-decisions objective)))
-        constraint-with-forced-decisions-and-expanded-terms (clojure.walk/postwalk
-                                                             (fn [x]
-                                                               (cond
-                                                                 (and (api/decision? x)
-                                                                      (not (api/lexical-decision? x)))
-                                                                 (api/force-type
-                                                                  x
-                                                                  (types/domain->type
-                                                                   (get model-decisions x)))
+        constraint-with-forced-decisions-and-expanded-terms
+        (clojure.walk/postwalk
+         (fn [x]
+           (cond
+             (and (api/decision? x)
+                  (not (api/lexical-decision? x)))
+             (api/force-type x (types/domain->type (get model-decisions x)))
 
-                                                                 (satisfies? protocols/IExpand x)
-                                                                 (expand-all x)
+             (satisfies? protocols/IExpand x)
+             (expand-all x)
 
-                                                                 :else x))
-                                                             constraint)
+             :else x))
+         constraint)
         [obj & obj-consts] (when objective
                              (if *flatten?*
                                (flattener/conjuctive-flattening objective)
                                [objective]))
         directive-str (if objective
                         (>> {:e (protocols/translate obj)
-                             :d (name (or direction :maximize))}
+                             :d (name (or (:direction opts) :maximize))}
                             "solve {{d}} {{e}};")
                         "solve satisfy;")
         constraints (if *flatten?*
-                      (concat (flattener/conjuctive-flattening constraint-with-forced-decisions-and-expanded-terms)
+                      (concat (flattener/conjuctive-flattening
+                               constraint-with-forced-decisions-and-expanded-terms)
                               obj-consts)
                       [constraint-with-forced-decisions-and-expanded-terms])
         constraint-str (->> constraints
@@ -228,7 +225,6 @@
         includes (into (collect-includes constraint-with-forced-decisions-and-expanded-terms)
                        (when objective (collect-includes objective)))
         include-strs (mapv #(str "include \"" % "\";") (sort includes))
-        ;; Keyword enum support
         all-keywords (collect-keywords constraint merged-decisions merged-bindings)
         enum-decl (keyword-enum-declaration all-keywords)
         kw-lookup (keyword-reverse-lookup all-keywords)
@@ -253,10 +249,83 @@
                              (fn [out-str]
                                (binding [*keyword-lookup* kw-lookup]
                                  (detranspile merged-decisions out-str))))]
-        ((if async?
-           adapter/call-async
-           adapter/call-sync)
-         all?
-         mzn
-         detranspile-fn
-         :timeout-ms (:timeout-ms opts))))))
+        ((if async? adapter/call-async adapter/call-sync)
+         all? mzn detranspile-fn :timeout-ms (:timeout-ms opts))))))
+
+(defn- cache-hit-chan
+  "Return a channel that emits the given solutions then closes."
+  [solutions]
+  (let [ch (async/chan)]
+    (async/go
+      (doseq [sol solutions]
+        (async/>! ch sol))
+      (async/close! ch))
+    ch))
+
+(defn solve [{:keys [all? async? direction] :as opts}
+             constraint
+             objective]
+  {:pre [(some? constraint)
+         (contains? (protocols/codomain constraint) types/Bool)
+         (or (nil? objective) (contains? (protocols/codomain objective) types/Numeric))
+         (or (nil? direction) (#{:maximize :minimize} direction))]}
+  (let [decisions  (when-not *debug* (cache/decisions-for constraint objective))
+        cached     (when decisions (cache/lookup-solutions constraint objective opts))
+        solutions  (:solutions cached)
+        complete?  (:complete? cached)]
+    (cond
+      ;; Non-all with cached solution: return one immediately
+      (and (seq solutions) (not all?))
+      (let [sol (cache/values->solution decisions (first solutions))]
+        (if async?
+          (cache-hit-chan [sol])
+          sol))
+
+      ;; All with complete cache: return full set, no re-solve needed
+      (and (seq solutions) all? complete?)
+      (let [sols (mapv #(cache/values->solution decisions %) solutions)]
+        (if async?
+          (cache-hit-chan sols)
+          sols))
+
+      ;; Need to invoke the solver
+      :else
+      (let [solver-result (solve-mzn opts constraint objective)]
+        (if *debug*
+          solver-result
+          (if async?
+            ;; Async: emit cached solutions first, then new solver results (deduped)
+            (let [{solver-chan :chan solver-complete? :complete?} solver-result
+                  out-ch (async/chan)]
+              (async/go
+                (when all?
+                  (doseq [vals solutions]
+                    (async/>! out-ch (cache/values->solution decisions vals))))
+                (loop [seen (or solutions #{})
+                       errored? false]
+                  (if-let [v (async/<! solver-chan)]
+                    (if (and (map? v) (contains? v :routaverra.igor.adapter/error))
+                      (do (async/>! out-ch v)
+                          (recur seen true))
+                      (let [vals (cache/solution->values decisions v)]
+                        (when-not (contains? seen vals)
+                          (async/>! out-ch v))
+                        (recur (conj seen vals) errored?)))
+                    (do
+                      (when-not errored?
+                        (cache/add-solutions! constraint objective opts
+                          seen @solver-complete?))
+                      (async/close! out-ch)))))
+              out-ch)
+            ;; Sync
+            (let [{solver-output :result mzn-complete? :complete?} solver-result]
+              (if all?
+                (let [new-vals (set (map #(cache/solution->values decisions %) solver-output))
+                      all-entry (cache/add-solutions! constraint objective opts
+                                  new-vals mzn-complete?)]
+                  (mapv #(cache/values->solution decisions %) (:solutions all-entry)))
+                (do
+                  (when solver-output
+                    (cache/add-solutions! constraint objective opts
+                      #{(cache/solution->values decisions solver-output)} mzn-complete?))
+                  solver-output)))))))))
