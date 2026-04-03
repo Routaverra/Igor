@@ -4,3 +4,5 @@ scratch/
 .nrepl-port
 target/
 *.class
+.lsp/
+.clj-kondo/

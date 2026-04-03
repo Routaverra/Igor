@@ -118,3 +118,87 @@
   "Create a domain containing a single value."
   [v]
   (->IntervalDomain v v))
+
+;; ============================================================
+;; SetDomain: GLB (must-be-in) / LUB (may-be-in)
+;;
+;; GLB is always a subset of LUB.
+;; When GLB = LUB, the set variable is fully assigned.
+;; The "undecided" elements are LUB \ GLB.
+;; ============================================================
+
+(defrecord SetDomain [glb lub] ;; both sorted-sets
+  IDomain
+  ;; IDomain methods adapted for sets — domain-min/max/size refer to
+  ;; the number of undecided elements (for search heuristics)
+  (domain-min [_] (count glb))    ;; not meaningful as "min value", but satisfies protocol
+  (domain-max [_] (count lub))
+  (domain-size [_] (count (clojure.set/difference lub glb))) ;; undecided elements
+  (assigned? [_] (= glb lub))
+  (contains-value? [_ v] (contains? lub v))
+  (remove-value [d v]
+    ;; Remove v from LUB (exclude element)
+    (if (not (contains? lub v))
+      [d #{}]
+      (if (contains? glb v)
+        ::failed ;; can't remove a required element
+        (let [new-lub (disj lub v)]
+          [(->SetDomain glb new-lub)
+           #{:lub-change}]))))
+  (restrict-min [d _] [d #{}]) ;; not applicable to sets
+  (restrict-max [d _] [d #{}]) ;; not applicable to sets
+  (domain-values [_] (seq lub)))  ;; all possible elements
+
+(defn set-require
+  "Add element v to GLB (require it in the set).
+   Returns [new-domain events] or ::failed."
+  [^SetDomain d v]
+  (if (contains? (:glb d) v)
+    [d #{}] ;; already required
+    (if (not (contains? (:lub d) v))
+      ::failed ;; can't require an element not in LUB
+      (let [new-glb (conj (:glb d) v)
+            new-d (->SetDomain new-glb (:lub d))
+            events (cond-> #{:glb-change}
+                     (= new-glb (:lub d)) (conj :assigned))]
+        [new-d events]))))
+
+(defn set-exclude
+  "Remove element v from LUB (exclude it from the set).
+   Returns [new-domain events] or ::failed."
+  [^SetDomain d v]
+  (remove-value d v))
+
+(defn set-require-all
+  "Add all elements from required-set to GLB.
+   Returns [new-domain events] or ::failed."
+  [^SetDomain d required-set]
+  (reduce (fn [[d events] v]
+            (let [result (set-require d v)]
+              (if (= result ::failed)
+                (reduced ::failed)
+                (let [[new-d new-events] result]
+                  [new-d (into events new-events)]))))
+          [d #{}]
+          required-set))
+
+(defn set-restrict-lub
+  "Restrict LUB to at most the given set (remove elements not in allowed).
+   Returns [new-domain events] or ::failed."
+  [^SetDomain d allowed-set]
+  (let [to-remove (clojure.set/difference (:lub d) allowed-set)]
+    (if (empty? to-remove)
+      [d #{}]
+      ;; Check that we're not removing required elements
+      (if (seq (clojure.set/intersection (:glb d) to-remove))
+        ::failed
+        (let [new-lub (clojure.set/intersection (:lub d) allowed-set)
+              new-d (->SetDomain (:glb d) new-lub)
+              events (cond-> #{:lub-change}
+                       (= (:glb d) new-lub) (conj :assigned))]
+          [new-d events])))))
+
+(defn set-assigned-value
+  "Get the assigned value of a set domain (GLB, which equals LUB when assigned)."
+  [^SetDomain d]
+  (:glb d))

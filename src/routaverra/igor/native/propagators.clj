@@ -1,11 +1,13 @@
 (ns routaverra.igor.native.propagators
   (:require [routaverra.igor.native.domains :as domains]
             [routaverra.igor.native.globals :as globals]
+            [routaverra.igor.native.sets :as sets]
             [routaverra.igor.api :as api]
             [routaverra.igor.types :as types]
             [routaverra.igor.protocols :as protocols]
             [routaverra.igor.terms.core :as terms]
-            [routaverra.igor.extensional :as extensional])
+            [routaverra.igor.extensional :as extensional]
+            [routaverra.igor.terms.set :as terms.set])
   (:import [routaverra.igor.terms.core
             TermPlus TermProduct TermMinus TermDivide
             TermInc TermDec TermMax TermMin TermAbs TermPow
@@ -17,7 +19,10 @@
             TermTrue? TermFalse? TermPos? TermNeg? TermZero?
             TermContains TermCount TermNth
             TermEven? TermOdd?]
-           [routaverra.igor.extensional TermTable]))
+           [routaverra.igor.extensional TermTable]
+           [routaverra.igor.terms.set
+            TermIntersection TermUnion TermDifference TermSymDiff
+            TermSubset TermSuperset TermSetLt TermSetLe]))
 
 ;; ---- Helpers ----
 
@@ -172,19 +177,26 @@
           ;; (= Decision Decision) — equality
           ;; Must come before IRecord check since Decisions are IRecords
           (and (decision? a) (decision? b))
-          [{:id (gensym "eq-dd-")
-            :vars #{a b}
-            :events {a #{:bounds :domain} b #{:bounds :domain}}
-            :priority 1
-            :propagate-fn (fn [store]
-                            (let [da (get store a) db (get store b)
-                                  result (domains/intersect-domain da db)]
-                              (if (= result ::domains/failed)
-                                ::domains/failed
-                                (let [[new-d _] result]
-                                  (-> store
-                                      (assoc a new-d)
-                                      (assoc b new-d))))))}]
+          (if (instance? routaverra.igor.native.domains.SetDomain (get-in kw-map [:_store a]))
+            ;; Set equality — handled at runtime by checking domain type
+            [(sets/set-equality-propagator a b)]
+            [{:id (gensym "eq-dd-")
+              :vars #{a b}
+              :events {a #{:bounds :domain :glb-change :lub-change}
+                       b #{:bounds :domain :glb-change :lub-change}}
+              :priority 1
+              :propagate-fn (fn [store]
+                              (let [da (get store a) db (get store b)]
+                                (if (and (instance? routaverra.igor.native.domains.SetDomain da)
+                                         (instance? routaverra.igor.native.domains.SetDomain db))
+                                  ;; Set equality
+                                  ((:propagate-fn (sets/set-equality-propagator a b)) store)
+                                  ;; Integer equality
+                                  (let [result (domains/intersect-domain da db)]
+                                    (if (= result ::domains/failed)
+                                      ::domains/failed
+                                      (let [[new-d _] result]
+                                        (-> store (assoc a new-d) (assoc b new-d))))))))}])
 
           ;; (= Decision TermRecord) — defining equality
           (and (decision? a) (instance? clojure.lang.IRecord b)
@@ -194,6 +206,13 @@
           (and (decision? b) (instance? clojure.lang.IRecord a)
                (satisfies? protocols/IExpress a))
           (compile-defining-equality b a kw-map)
+
+          ;; (= Decision constant-set)
+          (and (decision? a) (set? b))
+          [(sets/set-assign-propagator a b)]
+
+          (and (decision? b) (set? a))
+          [(sets/set-assign-propagator b a)]
 
           ;; (= Decision constant)
           (and (decision? a) (not (decision? b)))
@@ -912,47 +931,119 @@
 
 ;; (= bool_var (= x y)) — reified equality
 (defmethod compile-defining-equality TermEquals [b term kw-map]
-  (let [[x y] (:argv term)
-        vars (into #{b} (filter decision? [x y]))]
-    [{:id (gensym "reif-eq-")
-      :vars vars
-      :events (make-events-map (seq vars) #{:assigned :bounds})
-      :priority 1
-      :propagate-fn (fn [store]
-                      (let [[blo bhi] (resolve-bounds store b kw-map)
-                            [xlo xhi] (resolve-bounds store x kw-map)
-                            [ylo yhi] (resolve-bounds store y kw-map)]
-                        (cond
-                          ;; b = 1 → x = y (intersect)
-                          (= blo bhi 1)
-                          (let [new-lo (max xlo ylo)
-                                new-hi (min xhi yhi)]
-                            (if (> new-lo new-hi)
-                              ::domains/failed
-                              (cond-> store
-                                (decision? x) (safe-restrict-min x new-lo)
-                                (decision? x) (safe-restrict-max x new-hi)
-                                (decision? y) (safe-restrict-min y new-lo)
-                                (decision? y) (safe-restrict-max y new-hi))))
+  (let [[x y] (:argv term)]
+    (cond
+      ;; Set equality: (= b (= set-decision set-literal))
+      (and (decision? x) (set? y))
+      [(sets/set-assign-propagator x y)
+       ;; Force b=1 (the assignment is unconditional once b=1 from the root)
+       {:id (gensym "set-eq-force-")
+        :vars #{b}
+        :events {}
+        :priority 0
+        :propagate-fn (fn [store]
+                        (safe-restrict-min store b 1))}]
 
-                          ;; b = 0 → x != y
-                          (= blo bhi 0)
-                          (cond
-                            (and (= xlo xhi) (decision? y))
-                            (safe-remove-value store y xlo)
-                            (and (= ylo yhi) (decision? x))
-                            (safe-remove-value store x ylo)
-                            :else store)
+      (and (decision? y) (set? x))
+      [(sets/set-assign-propagator y x)
+       {:id (gensym "set-eq-force-")
+        :vars #{b}
+        :events {}
+        :priority 0
+        :propagate-fn (fn [store]
+                        (safe-restrict-min store b 1))}]
 
-                          ;; Both assigned and equal → b = 1
-                          (and (= xlo xhi) (= ylo yhi) (= xlo ylo))
-                          (safe-restrict-min store b 1)
+      ;; (= b (= set-var set-operation)) — the inner TermEquals defines
+      ;; a set variable from a set operation. Force b=1 and compile the definition.
+      (and (decision? x) (instance? clojure.lang.IRecord y) (not (decision? y)))
+      (cons {:id (gensym "force-true-")
+             :vars #{b} :events {} :priority 0
+             :propagate-fn (fn [store] (safe-restrict-min store b 1))}
+            (compile-defining-equality x y kw-map))
 
-                          ;; Domains don't overlap → b = 0
-                          (or (> xlo yhi) (> ylo xhi))
-                          (safe-restrict-max store b 0)
+      (and (decision? y) (instance? clojure.lang.IRecord x) (not (decision? x)))
+      (cons {:id (gensym "force-true-")
+             :vars #{b} :events {} :priority 0
+             :propagate-fn (fn [store] (safe-restrict-min store b 1))}
+            (compile-defining-equality y x kw-map))
 
-                          :else store)))}]))
+      ;; Set-set equality: (= b (= set-var1 set-var2))
+      (and (decision? x) (decision? y))
+      (let [vars (into #{b} [x y])]
+        [{:id (gensym "reif-eq-")
+          :vars vars
+          :events (make-events-map (seq vars) #{:assigned :bounds :glb-change :lub-change})
+          :priority 1
+          :propagate-fn (fn [store]
+                          (let [dx (get store x) dy (get store y)
+                                db (get store b)]
+                            (if (and (instance? routaverra.igor.native.domains.SetDomain dx)
+                                     (instance? routaverra.igor.native.domains.SetDomain dy))
+                              ;; Set-set equality
+                              (cond
+                                (and (domains/assigned? db) (= 1 (domains/domain-min db)))
+                                ((:propagate-fn (sets/set-equality-propagator x y)) store)
+                                (and (domains/assigned? dx) (domains/assigned? dy))
+                                (if (= (:glb dx) (:glb dy))
+                                  (safe-restrict-min store b 1)
+                                  (safe-restrict-max store b 0))
+                                :else store)
+                              ;; Integer equality
+                              (let [[blo bhi] [(domains/domain-min db) (domains/domain-max db)]
+                                    [xlo xhi] [(domains/domain-min dx) (domains/domain-max dx)]
+                                    [ylo yhi] [(domains/domain-min dy) (domains/domain-max dy)]]
+                                (cond
+                                  (= blo bhi 1)
+                                  (let [new-lo (max xlo ylo)
+                                        new-hi (min xhi yhi)]
+                                    (if (> new-lo new-hi)
+                                      ::domains/failed
+                                      (cond-> store
+                                        true (safe-restrict-min x new-lo)
+                                        true (safe-restrict-max x new-hi)
+                                        true (safe-restrict-min y new-lo)
+                                        true (safe-restrict-max y new-hi))))
+                                  (= blo bhi 0)
+                                  (cond
+                                    (= xlo xhi) (safe-remove-value store y xlo)
+                                    (= ylo yhi) (safe-remove-value store x ylo)
+                                    :else store)
+                                  (and (= xlo xhi) (= ylo yhi) (= xlo ylo))
+                                  (safe-restrict-min store b 1)
+                                  (or (> xlo yhi) (> ylo xhi))
+                                  (safe-restrict-max store b 0)
+                                  :else store)))))}])
+
+      ;; Constant-constant or other cases
+      :else
+      (let [vars (into #{b} (filter decision? [x y]))]
+        [{:id (gensym "reif-eq-")
+          :vars vars
+          :events (make-events-map (seq vars) #{:assigned :bounds})
+          :priority 1
+          :propagate-fn (fn [store]
+                          (let [[blo bhi] (resolve-bounds store b kw-map)
+                                [xlo xhi] (resolve-bounds store x kw-map)
+                                [ylo yhi] (resolve-bounds store y kw-map)]
+                            (cond
+                              (= blo bhi 1)
+                              (let [new-lo (max xlo ylo) new-hi (min xhi yhi)]
+                                (if (> new-lo new-hi) ::domains/failed
+                                    (cond-> store
+                                      (decision? x) (safe-restrict-min x new-lo)
+                                      (decision? x) (safe-restrict-max x new-hi)
+                                      (decision? y) (safe-restrict-min y new-lo)
+                                      (decision? y) (safe-restrict-max y new-hi))))
+                              (= blo bhi 0)
+                              (cond
+                                (and (= xlo xhi) (decision? y)) (safe-remove-value store y xlo)
+                                (and (= ylo yhi) (decision? x)) (safe-remove-value store x ylo)
+                                :else store)
+                              (and (= xlo xhi) (= ylo yhi) (= xlo ylo))
+                              (safe-restrict-min store b 1)
+                              (or (> xlo yhi) (> ylo xhi))
+                              (safe-restrict-max store b 0)
+                              :else store)))}]))))
 
 ;; ---- Reified logical inside defining equality ----
 
@@ -1029,6 +1120,110 @@
      :priority 0
      :propagate-fn (fn [store] (safe-restrict-min store z 1))}]
    (compile-constraint term kw-map)))
+
+;; ---- Set operation propagators (defining equality) ----
+
+;; (= z (intersection a b))
+(defmethod compile-defining-equality TermIntersection [z term kw-map]
+  (let [[a b] (:argv term)]
+    [(sets/intersection-propagator z a b)]))
+
+;; (= z (union a b))
+(defmethod compile-defining-equality TermUnion [z term kw-map]
+  (let [[a b] (:argv term)]
+    [(sets/union-propagator z a b)]))
+
+;; (= z (difference a b))
+(defmethod compile-defining-equality TermDifference [z term kw-map]
+  (let [[a b] (:argv term)]
+    [(sets/difference-propagator z a b)]))
+
+;; (= z (sym-diff a b))
+(defmethod compile-defining-equality TermSymDiff [z term kw-map]
+  (let [[a b] (:argv term)]
+    [(sets/symdiff-propagator z a b)]))
+
+;; (= b (subset? a c)) — reified subset
+(defmethod compile-defining-equality TermSubset [b term kw-map]
+  (let [[a c] (:argv term)]
+    [(sets/reified-subset-propagator b a c)]))
+
+;; (= b (superset? a c)) — reified superset
+(defmethod compile-defining-equality TermSuperset [b term kw-map]
+  (let [[a c] (:argv term)]
+    [(sets/reified-superset-propagator b a c)]))
+
+;; TermSubset at top level: a ⊆ b must hold
+(defmethod compile-constraint TermSubset [term kw-map]
+  (let [[a b] (:argv term)]
+    [(sets/subset-propagator a b)]))
+
+;; TermSuperset at top level: a ⊇ b → b ⊆ a
+(defmethod compile-constraint TermSuperset [term kw-map]
+  (let [[a b] (:argv term)]
+    [(sets/subset-propagator b a)]))
+
+;; (= z (contains? s v)) — reified contains (via defining equality)
+(defmethod compile-defining-equality TermContains [z term kw-map]
+  ;; contains? returns bool. z is a boolean Decision.
+  ;; When z=1, v must be in s. When z=0, v must not be in s.
+  (let [[s v] (:argv term)]
+    [(sets/contains-propagator s v kw-map)
+     ;; Also force z=1 since contains? at the constraint level means it must hold
+     ;; Actually, in reified form z tracks the truth value
+     {:id (gensym "contains-reif-")
+      :vars (into #{z s} (filter decision? [v]))
+      :events (into {z #{:assigned :bounds} s #{:glb-change :lub-change}}
+                    (when (decision? v) {v #{:assigned :bounds}}))
+      :priority 2
+      :propagate-fn
+      (fn [store]
+        (let [dz (get store z)
+              ds (get store s)
+              v-val (if (decision? v) (domains/domain-min (get store v)) v)]
+          (cond
+            ;; z=1 → v must be in s
+            (and (domains/assigned? dz) (= 1 (domains/domain-min dz))
+                 (or (not (decision? v)) (domains/assigned? (get store v))))
+            (let [r (domains/set-require ds v-val)]
+              (if (= r ::domains/failed) ::domains/failed
+                  (assoc store s (first r))))
+
+            ;; z=0 → v must not be in s
+            (and (domains/assigned? dz) (= 0 (domains/domain-min dz))
+                 (or (not (decision? v)) (domains/assigned? (get store v))))
+            (let [r (domains/set-exclude ds v-val)]
+              (if (= r ::domains/failed) ::domains/failed
+                  (assoc store s (first r))))
+
+            ;; v in s.GLB → z=1
+            (and (or (not (decision? v)) (domains/assigned? (get store v)))
+                 (contains? (:glb ds) v-val))
+            (let [r (domains/restrict-min dz 1)]
+              (if (= r ::domains/failed) ::domains/failed
+                  (assoc store z (first r))))
+
+            ;; v not in s.LUB → z=0
+            (and (or (not (decision? v)) (domains/assigned? (get store v)))
+                 (not (contains? (:lub ds) v-val)))
+            (let [r (domains/restrict-max dz 0)]
+              (if (= r ::domains/failed) ::domains/failed
+                  (assoc store z (first r))))
+
+            :else store)))}]))
+
+;; TermContains at top level: v ∈ s must hold
+(defmethod compile-constraint TermContains [term kw-map]
+  (let [[s v] (:argv term)]
+    [(sets/contains-propagator s v kw-map)]))
+
+;; (= n (count s)) — set cardinality
+(defmethod compile-defining-equality TermCount [z term kw-map]
+  (let [[s] (:argv term)]
+    (if (instance? routaverra.igor.native.domains.SetDomain nil) ;; can't check at compile time
+      ;; Always create cardinality propagator — it handles both set and other cases
+      [(sets/cardinality-propagator z s)]
+      [(sets/cardinality-propagator z s)])))
 
 ;; ---- Table constraint ----
 

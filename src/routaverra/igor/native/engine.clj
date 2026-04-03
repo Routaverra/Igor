@@ -47,7 +47,17 @@
                     (domains/->IntervalDomain 0 (dec n))))
 
                 (= type types/Set)
-                (throw (ex-info "Set variables not yet supported in native solver" {:decision decision}))
+                (if binding-set
+                  ;; GLB starts empty, LUB starts with all possible elements
+                  (let [elements (into (sorted-set) (filter integer?) binding-set)]
+                    (domains/->SetDomain (sorted-set) elements))
+                  ;; Unbound set (introduced by set flattening) — start with empty GLB
+                  ;; LUB will be narrowed by propagation; use a placeholder that gets
+                  ;; replaced after the full store is built
+                  (if (api/impl-decision? decision)
+                    (domains/->SetDomain (sorted-set) (sorted-set))
+                    (throw (ex-info (str "Unbound set decision: " (:id decision))
+                                   {:decision decision}))))
 
                 (= type types/Numeric)
                 (if binding-set
@@ -73,14 +83,14 @@
        (if (api/impl-decision? decision)
          sol
          (let [type (types/domain->type domain-map)
-               d (get store decision)
-               raw-val (domains/domain-min d)]
+               d (get store decision)]
            (assoc sol decision
                   (case type
-                    ::types/numeric raw-val
-                    ::types/boolean (not= 0 raw-val)
-                    ::types/keyword (get int->kw raw-val)
-                    raw-val)))))
+                    ::types/numeric (domains/domain-min d)
+                    ::types/boolean (not= 0 (domains/domain-min d))
+                    ::types/keyword (get int->kw (domains/domain-min d))
+                    ::types/set (domains/set-assigned-value d)
+                    (domains/domain-min d))))))
      {}
      merged-decisions)))
 
@@ -93,6 +103,20 @@
            objective-var direction all-keywords] :as model}]
   (let [kw-map (build-keyword-map all-keywords)
         store (make-store merged-decisions merged-bindings kw-map)
+        ;; Introduced set decisions start with empty LUBs. Give them the
+        ;; union of all bound set variables' LUBs so propagation can narrow.
+        universal-lub (reduce-kv (fn [acc _ d]
+                                   (if (and (instance? routaverra.igor.native.domains.SetDomain d)
+                                            (seq (:lub d)))
+                                     (into acc (:lub d))
+                                     acc))
+                                 (sorted-set) store)
+        store (reduce-kv (fn [s dec d]
+                           (if (and (instance? routaverra.igor.native.domains.SetDomain d)
+                                    (empty? (:lub d)))
+                             (assoc s dec (domains/->SetDomain (sorted-set) universal-lub))
+                             s))
+                         store store)
         propagators (vec (mapcat #(propagators/compile-constraint % kw-map) constraints))
         subscriptions (fixpoint/build-subscriptions propagators)
         store (fixpoint/propagate-fixpoint propagators store (fixpoint/initial-queue propagators) subscriptions)]

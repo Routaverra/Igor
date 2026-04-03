@@ -23,16 +23,15 @@
                    ;; postwalk key mismatches when the same Decision appears in
                    ;; multiple sibling terms
 
+                   (nil? (api/cacheing-decisions node))
+                   ;; ground values (no decision variables) are constants —
+                   ;; substituting them wastes an introduced variable
+
                    (some api/lexical-decision? (keys (api/cacheing-decisions node)))
 
                    (contains? substitutions node)
                    ;; an identical expression has been substituted elsewhere in the tree
                    ;; allowing the existing substitution to remain is a form of common subexpression elimination
-
-                   (contains?
-                    (set (keys (protocols/codomain node)))
-                    types/Set)
-                   ;; substitution of sets requires forwarding of bindings. skip for now...
 
                    (satisfies? protocols/IInclude node)
                    ;; global constraints (regular, cost_regular, table, graph constraints)

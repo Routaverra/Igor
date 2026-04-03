@@ -11,36 +11,67 @@
           (keys merged-decisions)))
 
 (defn select-variable
-  "First-fail heuristic: select unassigned variable with smallest domain."
+  "First-fail heuristic: select unassigned variable with smallest domain.
+   For integer variables, domain-size is the number of possible values.
+   For set variables, domain-size is the number of undecided elements."
   [store merged-decisions]
   (->> (keys merged-decisions)
        (remove #(domains/assigned? (get store %)))
-       (apply min-key #(domains/domain-size (get store %)))))
+       (apply min-key #(let [d (get store %)]
+                         (if (instance? routaverra.igor.native.domains.SetDomain d)
+                           ;; For sets: number of undecided elements
+                           (domains/domain-size d)
+                           ;; For integers: domain size
+                           (domains/domain-size d))))))
 
-(defn select-value
-  "Select minimum value from variable's domain."
+(defn- set-domain? [d] (instance? routaverra.igor.native.domains.SetDomain d))
+
+(defn branch
+  "Create two branches for a variable. For integer variables: assign min value
+   vs remove it. For set variables: require an undecided element vs exclude it.
+   Returns [[store1 events1] [store2 events2]] where each may be ::failed."
   [store var]
-  (domains/domain-min (get store var)))
+  (let [d (get store var)]
+    (if (set-domain? d)
+      ;; Set variable: pick first undecided element
+      (let [undecided (first (clojure.set/difference (:lub d) (:glb d)))
+            ;; Branch 1: require element (add to GLB)
+            r1 (domains/set-require d undecided)
+            b1 (if (= r1 ::domains/failed)
+                 ::domains/failed
+                 (let [[new-d events] r1]
+                   [(assoc store var new-d) {var events}]))
+            ;; Branch 2: exclude element (remove from LUB)
+            r2 (domains/set-exclude d undecided)
+            b2 (if (= r2 ::domains/failed)
+                 ::domains/failed
+                 (let [[new-d events] r2]
+                   [(assoc store var new-d) {var events}]))]
+        [b1 b2])
+      ;; Integer variable: assign min vs remove min
+      (let [val (domains/domain-min d)
+            ;; Branch 1: assign var = val
+            r1 (domains/intersect-domain d (domains/make-singleton val))
+            b1 (if (= r1 ::domains/failed)
+                 ::domains/failed
+                 (let [[new-d events] r1]
+                   [(assoc store var new-d) {var events}]))
+            ;; Branch 2: remove val
+            r2 (domains/remove-value d val)
+            b2 (if (= r2 ::domains/failed)
+                 ::domains/failed
+                 (let [[new-d events] r2]
+                   [(assoc store var new-d) {var events}]))]
+        [b1 b2]))))
 
-(defn branch-assign
-  "Assign var=val in store. Returns [new-store events-map] or ::failed."
-  [store var val]
-  (let [d (get store var)
-        result (domains/intersect-domain d (domains/make-singleton val))]
-    (if (= result ::domains/failed)
-      ::domains/failed
-      (let [[new-d events] result]
-        [(assoc store var new-d) {var events}]))))
-
-(defn branch-remove
-  "Remove val from var's domain. Returns [new-store events-map] or ::failed."
-  [store var val]
-  (let [d (get store var)
-        result (domains/remove-value d val)]
-    (if (= result ::domains/failed)
-      ::domains/failed
-      (let [[new-d events] result]
-        [(assoc store var new-d) {var events}]))))
+(defn- propagate-branch
+  "Propagate a branch result. Returns store or ::failed."
+  [propagators subscriptions branch-result]
+  (if (= branch-result ::domains/failed)
+    ::domains/failed
+    (let [[store events] branch-result
+          queue (fixpoint/events->queue events subscriptions propagators)]
+      (fixpoint/propagate-fixpoint propagators store queue subscriptions))))
 
 (defn solve-dfs
   "Depth-first search. Returns a fully-assigned store or nil."
@@ -50,21 +81,13 @@
     (all-assigned? store merged-decisions) store
     :else
     (let [var (select-variable store merged-decisions)
-          val (select-value store var)
-          ;; Branch 1: var = val
-          branch1 (branch-assign store var val)]
-      (or (when-not (= branch1 ::domains/failed)
-            (let [[store1 events1] branch1
-                  queue1 (fixpoint/events->queue events1 subscriptions propagators)
-                  store1 (fixpoint/propagate-fixpoint propagators store1 queue1 subscriptions)]
+          [b1 b2] (branch store var)]
+      (or (let [store1 (propagate-branch propagators subscriptions b1)]
+            (when-not (= store1 ::domains/failed)
               (solve-dfs propagators store1 subscriptions merged-decisions)))
-          ;; Branch 2: var != val
-          (let [branch2 (branch-remove store var val)]
-            (when-not (= branch2 ::domains/failed)
-              (let [[store2 events2] branch2
-                    queue2 (fixpoint/events->queue events2 subscriptions propagators)
-                    store2 (fixpoint/propagate-fixpoint propagators store2 queue2 subscriptions)]
-                (solve-dfs propagators store2 subscriptions merged-decisions))))))))
+          (let [store2 (propagate-branch propagators subscriptions b2)]
+            (when-not (= store2 ::domains/failed)
+              (solve-dfs propagators store2 subscriptions merged-decisions)))))))
 
 (defn solve-all-dfs
   "Find all solutions via DFS. Returns vector of fully-assigned stores."
@@ -74,23 +97,15 @@
     (all-assigned? store merged-decisions) [store]
     :else
     (let [var (select-variable store merged-decisions)
-          val (select-value store var)
-          ;; Branch 1: var = val
-          branch1 (branch-assign store var val)
-          sols1 (if (= branch1 ::domains/failed)
+          [b1 b2] (branch store var)
+          store1 (propagate-branch propagators subscriptions b1)
+          sols1 (if (= store1 ::domains/failed)
                   []
-                  (let [[store1 events1] branch1
-                        queue1 (fixpoint/events->queue events1 subscriptions propagators)
-                        store1 (fixpoint/propagate-fixpoint propagators store1 queue1 subscriptions)]
-                    (solve-all-dfs propagators store1 subscriptions merged-decisions)))
-          ;; Branch 2: var != val
-          branch2 (branch-remove store var val)
-          sols2 (if (= branch2 ::domains/failed)
+                  (solve-all-dfs propagators store1 subscriptions merged-decisions))
+          store2 (propagate-branch propagators subscriptions b2)
+          sols2 (if (= store2 ::domains/failed)
                   []
-                  (let [[store2 events2] branch2
-                        queue2 (fixpoint/events->queue events2 subscriptions propagators)
-                        store2 (fixpoint/propagate-fixpoint propagators store2 queue2 subscriptions)]
-                    (solve-all-dfs propagators store2 subscriptions merged-decisions)))]
+                  (solve-all-dfs propagators store2 subscriptions merged-decisions))]
       (into sols1 sols2))))
 
 (defn solve-optimize

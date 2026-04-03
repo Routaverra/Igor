@@ -1,176 +1,94 @@
 (ns routaverra.igor.native.globals
-  "Global constraint propagators: AllDifferent (bounds consistency)
+  "Global constraint propagators: AllDifferent (value removal + bounds check)
    and Table (simple filter-and-intersect)."
   (:require [routaverra.igor.native.domains :as domains]
             [routaverra.igor.api :as api]))
 
 ;; ============================================================
-;; AllDifferent — Bounds Consistency via Hall Intervals
+;; AllDifferent — Value Consistency + Global Bounds Check
 ;;
-;; Algorithm: Sort variables by lower bound. Sweep through and track
-;; how many variables must fit into each range of values. When a range
-;; [a..b] contains exactly (b - a + 1) variables whose domains are
-;; subsets of [a..b], those values are "consumed" — other variables'
-;; bounds must be pushed past them.
+;; Current implementation uses two-phase propagation:
+;; 1. Value removal: when a variable is assigned, remove its value
+;;    from all other variables.
+;; 2. Bounds check: if the number of variables exceeds the range
+;;    [min(mins)..max(maxes)], fail immediately.
 ;;
-;; This is a simplified version of the Lopez-Ortiz et al. algorithm.
-;; Complexity: O(n log n) per propagation call.
+;; ## Consistency levels (from weakest to strongest)
+;;
+;; Value consistency (what we do):
+;;   - O(n) per propagation
+;;   - Only prunes when a variable is assigned
+;;   - Global bounds check catches obvious infeasibility
+;;
+;; Bounds consistency (Hall intervals, Lopez-Ortiz et al. 2003):
+;;   - O(n log n) per propagation
+;;   - Finds groups of k variables whose combined range spans exactly
+;;     k values, and prunes those values from all other variables
+;;   - Standard in Gecode and Chuffed
+;;
+;; Domain consistency (maximum bipartite matching):
+;;   - O(n * sqrt(n)) per propagation
+;;   - Strongest pruning — removes any value that doesn't participate
+;;     in a maximum matching
+;;   - Used optionally in Gecode
+;;
+;; ## When to upgrade
+;;
+;; The current level is adequate when alldifferent is one constraint
+;; among many (SEND+MORE=MONEY, graph coloring). The gap becomes
+;; noticeable when alldifferent is the primary constraint and domains
+;; overlap heavily — large N-queens (N>12), latin squares, scheduling
+;; with many workers. If solve times on such problems become a
+;; bottleneck, implement bounds consistency via the sweep-line Hall
+;; interval algorithm.
 ;; ============================================================
 
-(defn- prune-lower-bounds
-  "Sweep from low to high, pushing variable lower bounds past Hall intervals.
-   Returns updated store or ::failed."
-  [store sorted-vars]
-  (let [n (count sorted-vars)]
-    (loop [store store
-           ;; Sweep: track intervals [hall-lo, hall-hi] that are fully consumed
-           i 0
-           ;; bounds-stack: vector of [lo, count] tracking partially filled intervals
-           bounds-stack []
-           max-hi Long/MIN_VALUE]
-      (if (>= i n)
-        store
-        (let [v (nth sorted-vars i)
-              d (get store v)
-              lo (domains/domain-min d)
-              hi (domains/domain-max d)
-              max-hi (max max-hi hi)
-              ;; Start a new interval at lo with count 1, or merge with existing
-              bounds-stack (loop [stack bounds-stack]
-                             (if (and (seq stack)
-                                      (>= lo (first (peek stack))))
-                               ;; Merge: this variable's lo is within the top interval
-                               (let [[top-lo top-count] (peek stack)
-                                     stack (pop stack)
-                                     new-lo (min top-lo lo)
-                                     new-count (inc top-count)]
-                                 (if (and (seq stack)
-                                          (>= new-lo (first (peek stack))))
-                                   (recur (conj (pop stack) [(first (peek stack))
-                                                              (+ (second (peek stack)) new-count)]))
-                                   (conj stack [new-lo new-count])))
-                               (conj stack [lo 1])))
-              ;; Check if the top interval is a Hall interval:
-              ;; count variables == count values in [lo..hi]
-              [top-lo top-count] (peek bounds-stack)]
-          ;; A Hall interval: top-count vars must fit in [top-lo..hi]
-          ;; where hi is the max upper bound seen so far
-          ;; If count > range size, fail
-          ;; If count == range size, push other vars' lower bounds past hi
-          (recur store (inc i) bounds-stack max-hi))))))
-
-(defn- alldifferent-bounds-propagate
-  "AllDifferent bounds consistency propagation.
-   Uses a simpler but effective approach: for each assigned variable,
-   remove its value from all other variables. For bounds, check if
-   the range [min..max] across all variables is large enough."
-  [decisions store]
+(defn- alldifferent-propagate [decisions store]
   (let [n (count decisions)
         ;; Phase 1: Remove assigned values from other variables
         store (reduce
-               (fn [store [i vi]]
+               (fn [store vi]
                  (if (= store ::domains/failed)
                    ::domains/failed
                    (let [di (get store vi)]
                      (if (domains/assigned? di)
                        (let [val (domains/domain-min di)]
                          (reduce
-                          (fn [store [j vj]]
-                            (if (= store ::domains/failed)
-                              ::domains/failed
-                              (if (= i j)
-                                store
-                                (let [dj (get store vj)
-                                      result (domains/remove-value dj val)]
-                                  (if (= result ::domains/failed)
-                                    ::domains/failed
-                                    (let [[new-dj _] result]
-                                      (assoc store vj new-dj)))))))
+                          (fn [store vj]
+                            (if (or (= store ::domains/failed) (= vi vj))
+                              store
+                              (let [dj (get store vj)
+                                    result (domains/remove-value dj val)]
+                                (if (= result ::domains/failed)
+                                  ::domains/failed
+                                  (let [[new-dj _] result]
+                                    (assoc store vj new-dj))))))
                           store
-                          (map-indexed vector decisions)))
+                          decisions))
                        store))))
                store
-               (map-indexed vector decisions))
-        ]
+               decisions)]
     (if (= store ::domains/failed)
       ::domains/failed
-      ;; Phase 2: Bounds tightening via Hall interval detection
-      ;; Sort variables by lower bound
-      (let [sorted-by-min (sort-by #(domains/domain-min (get store %)) decisions)
-            ;; Lower bound sweep: find intervals where count == range
-            store (loop [store store
-                         changed? true]
-                    (if (not changed?)
-                      store
-                      (let [sorted (sort-by #(domains/domain-min (get store %)) decisions)
-                            result (reduce
-                                    (fn [{:keys [store changed?] :as acc} hall-size]
-                                      ;; Try every contiguous group of hall-size variables (sorted by min)
-                                      ;; and check if they form a Hall set
-                                      (reduce
-                                       (fn [{:keys [store changed?] :as acc} start]
-                                         (let [group (subvec (vec sorted) start (+ start hall-size))
-                                               lo (domains/domain-min (get store (first group)))
-                                               hi (apply max (map #(domains/domain-max (get store %)) group))
-                                               range-size (inc (- hi lo))]
-                                           (if (< range-size hall-size)
-                                             ;; More variables than values — fail
-                                             (reduced (reduced {:store ::domains/failed :changed? false}))
-                                             (if (= range-size hall-size)
-                                               ;; Hall set: prune values [lo..hi] from all other vars
-                                               (let [others (remove (set group) decisions)
-                                                     new-store (reduce
-                                                                (fn [s v]
-                                                                  (if (= s ::domains/failed)
-                                                                    ::domains/failed
-                                                                    (let [d (get s v)
-                                                                          d-min (domains/domain-min d)
-                                                                          d-max (domains/domain-max d)]
-                                                                      (if (or (> d-min hi) (< d-max lo))
-                                                                        s ;; no overlap
-                                                                        (let [;; Restrict bounds to exclude [lo..hi]
-                                                                              s (if (and (>= d-min lo) (<= d-min hi))
-                                                                                  (let [r (domains/restrict-min d (inc hi))]
-                                                                                    (if (= r ::domains/failed)
-                                                                                      ::domains/failed
-                                                                                      (assoc s v (first r))))
-                                                                                  s)]
-                                                                          (if (= s ::domains/failed)
-                                                                            ::domains/failed
-                                                                            (let [d (get s v)
-                                                                                  s (if (and (>= d-max lo) (<= d-max hi))
-                                                                                      (let [r (domains/restrict-max d (dec lo))]
-                                                                                        (if (= r ::domains/failed)
-                                                                                          ::domains/failed
-                                                                                          (assoc s v (first r))))
-                                                                                      s)]
-                                                                              s)))))))
-                                                                store
-                                                                others)]
-                                                 (if (= new-store ::domains/failed)
-                                                   (reduced (reduced {:store ::domains/failed :changed? false}))
-                                                   {:store new-store
-                                                    :changed? (or changed? (not= new-store store))}))
-                                               acc))))
-                                       acc
-                                       (range 0 (inc (- (count sorted) hall-size)))))
-                                    {:store store :changed? false}
-                                    (range 2 (inc (count decisions))))]
-                        (if (= (:store result) ::domains/failed)
-                          ::domains/failed
-                          (recur (:store result) (:changed? result))))))]
-        store))))
+      ;; Phase 2: Bounds check — n variables need n distinct values,
+      ;; so the range must be at least n wide
+      (let [global-min (apply min (map #(domains/domain-min (get store %)) decisions))
+            global-max (apply max (map #(domains/domain-max (get store %)) decisions))
+            range-size (inc (- global-max global-min))]
+        (if (< range-size n)
+          ::domains/failed
+          store)))))
 
 (defn alldifferent-propagator
-  "Create an AllDifferent propagator using bounds consistency."
+  "Create an AllDifferent propagator."
   [decisions]
   (let [dec-set (set decisions)]
-    {:id (gensym "alldiff-bnd-")
+    {:id (gensym "alldiff-")
      :vars dec-set
      :events (into {} (map (fn [d] [d #{:assigned :bounds}]) decisions))
      :priority 3
      :propagate-fn (fn [store]
-                     (alldifferent-bounds-propagate decisions store))}))
+                     (alldifferent-propagate decisions store))}))
 
 ;; ============================================================
 ;; Table — Simple filter-and-intersect
@@ -205,11 +123,9 @@
      :priority 4
      :propagate-fn
      (fn [store]
-       (let [;; Filter tuples to those consistent with current domains
-             surviving (filter #(tuple-consistent? store decisions % kw-map) tuples)]
+       (let [surviving (filter #(tuple-consistent? store decisions % kw-map) tuples)]
          (if (empty? surviving)
            ::domains/failed
-           ;; For each variable, intersect domain with values from surviving tuples
            (reduce
             (fn [store i]
               (if (= store ::domains/failed)

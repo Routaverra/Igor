@@ -295,6 +295,69 @@
 ;; Table constraint (Phase 4)
 ;; ============================================================
 
+;; ============================================================
+;; Set operations (Phase 5)
+;; ============================================================
+
+(deftest set-intersection-native-test
+  (let [res (i/fresh-set (range 12))
+        a (i/fresh-set (range 12))
+        b (i/fresh-set (range 12))
+        sol (i/satisfy (i/and (i/= a #{1 2 3 4 5 6}) (i/= b #{4 5 6 7 8 9})
+                             (i/= res (i/intersection a b))) native)]
+    (is (= #{4 5 6} (get sol res)))))
+
+(deftest set-difference-native-test
+  (let [res (i/fresh-set (range 12))
+        a (i/fresh-set (range 12))
+        b (i/fresh-set (range 12))
+        sol (i/satisfy (i/and (i/= a #{1 2 3 4 5 6}) (i/= b #{4 5 6 7 8 9})
+                             (i/= res (i/difference a b))) native)]
+    (is (= #{1 2 3} (get sol res)))))
+
+(deftest set-union-native-test
+  (let [res (i/fresh-set (range 12))
+        a (i/fresh-set (range 12))
+        b (i/fresh-set (range 12))
+        sol (i/satisfy (i/and (i/= a #{1 2 3 4 5 6}) (i/= b #{4 5 6 7 8 9})
+                             (i/= res (i/union a b))) native)]
+    (is (= #{1 2 3 4 5 6 7 8 9} (get sol res)))))
+
+(deftest set-partition-native-test
+  (let [domain (range 6)
+        a (i/fresh-set domain)
+        b (i/fresh-set domain)
+        sol (i/satisfy (i/and (i/= (i/union a b) (set domain))
+                             (i/= (i/count (i/intersection a b)) 0)
+                             (i/= (i/count a) 3) (i/= (i/count b) 3)) native)]
+    (is (some? sol))
+    (is (= (set domain) (clojure.set/union (get sol a) (get sol b))))
+    (is (empty? (clojure.set/intersection (get sol a) (get sol b))))))
+
+(deftest set-subset-chain-native-test
+  (let [domain (range 8)
+        a (i/fresh-set domain)
+        b (i/fresh-set domain)
+        c (i/fresh-set domain)
+        sol (i/satisfy (i/and (i/= (i/count a) 2) (i/= (i/count b) 4) (i/= (i/count c) 6)
+                             (i/subset? a b) (i/subset? b c)) native)]
+    (is (some? sol))
+    (is (clojure.set/subset? (get sol a) (get sol b)))
+    (is (clojure.set/subset? (get sol b) (get sol c)))))
+
+(deftest set-covering-native-test
+  (let [domain (range 10)
+        s (i/fresh-set domain)
+        sol (i/satisfy (i/and (i/contains? s 1) (i/contains? s 3)
+                             (i/contains? s 5) (i/contains? s 7)
+                             (i/= (i/count s) 4)) native)]
+    (is (= 4 (count (get sol s))))
+    (is (every? (get sol s) [1 3 5 7]))))
+
+;; ============================================================
+;; Table constraint (Phase 4)
+;; ============================================================
+
 (deftest table-basic-native-test
   (testing "table constrains vars to one of the allowed tuples"
     (let [x1 (i/fresh-int (range 10))

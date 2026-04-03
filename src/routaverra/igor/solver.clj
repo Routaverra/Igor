@@ -75,7 +75,18 @@
                   (= type types/Set)
                   (if set
                     (>>* "var set of {{range}}: {{decision}};")
-                    (throw (ex-info (str "unbound set decision: " (protocols/write decision)) {})))
+                    (if (or (api/impl-decision? decision)
+                            (api/lexical-decision? decision))
+                      ;; Introduced set variable — derive range from all bound set decisions
+                      (let [all-set-ranges (->> decisions
+                                                (filter (fn [[d dm]]
+                                                          (and (= types/Set (types/domain->type dm))
+                                                               (api/binding-set (get bindings d)))))
+                                                (mapcat (fn [[d _]] (api/binding-set (get bindings d)))))
+                            universal (apply sorted-set all-set-ranges)]
+                        (>> (assoc env :range (protocols/translate universal))
+                            "var set of {{range}}: {{decision}};"))
+                      (throw (ex-info (str "unbound set decision: " (protocols/write decision)) {}))))
 
                   (= type types/Numeric)
                   (if set

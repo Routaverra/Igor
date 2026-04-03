@@ -80,7 +80,7 @@ Cloned into `refs/` for implementation reference:
 
 ## Phases
 
-### Phase 0: Backend Dispatch Infrastructure
+### Phase 0: Backend Dispatch Infrastructure ✓
 
 **Goal**: Wire up a `:solver` option so `satisfy`, `minimize`, `maximize` can
 dispatch to either `:minizinc` (existing) or `:native` (new) backend, with
@@ -127,7 +127,7 @@ It then:
 
 ---
 
-### Phase 1: Domains and Fixpoint Engine
+### Phase 1: Domains and Fixpoint Engine ✓
 
 **Goal**: Implement domain representations and the core propagation fixpoint
 loop. No search yet — just propagation on an already-constrained store.
@@ -272,7 +272,7 @@ propagators subscribe to that variable+event and enqueue them.
 
 ---
 
-### Phase 2: Basic Propagators
+### Phase 2: Basic Propagators ✓
 
 **Goal**: Implement propagators for all arithmetic, comparison, and logical
 operations that Igor supports. These map 1:1 to the term records in
@@ -512,7 +512,7 @@ compilation step recognizes this pattern and emits a reified propagator:
 
 ---
 
-### Phase 3: Search
+### Phase 3: Search ✓
 
 **Goal**: Implement DFS search with variable/value selection heuristics.
 This makes the native solver actually capable of finding solutions.
@@ -636,7 +636,7 @@ This makes the native solver actually capable of finding solutions.
 
 ---
 
-### Phase 4: Global Constraint Propagators
+### Phase 4: Global Constraint Propagators ✓
 
 **Goal**: Implement the critical global constraints that provide orders of
 magnitude better pruning than decomposition.
@@ -742,7 +742,7 @@ Subscribe: `:domain` on all variables.
 
 ---
 
-### Phase 5: Set Variable Propagators
+### Phase 5: Set Variable Propagators ✓
 
 **Goal**: Support set decision variables with GLB/LUB propagation.
 
@@ -1094,14 +1094,16 @@ Not required for correctness — purely a performance enhancement for future wor
 ```
 src/routaverra/igor/
   native/
-    engine.clj      -- Phase 0+1: store, fixpoint loop, solve-native entry point
-    domains.clj      -- Phase 1: IntervalDomain, EnumeratedDomain, SetDomain
-    propagators.clj  -- Phase 2: compile-constraint, arithmetic/logic/comparison
-    search.clj       -- Phase 3: DFS, variable/value selection, optimization
-    globals.clj      -- Phase 4: alldifferent, element, table
-    sets.clj         -- Phase 5: set variable propagators
-    extensional.clj  -- Phase 6: regular, cost-regular
-    graph.clj        -- Phase 7: graph constraint decomposition/propagation
+    README.md        -- architectural overview
+    engine.clj       -- store construction, solve-native entry point        ✓
+    domains.clj      -- IntervalDomain, EnumeratedDomain, SetDomain         ✓
+    fixpoint.clj     -- propagation loop, subscriptions, event routing      ✓
+    propagators.clj  -- compile-constraint, all arithmetic/logic/comparison  ✓
+    search.clj       -- DFS, all-solutions, branch-and-bound                ✓
+    globals.clj      -- alldifferent (bounds), table                        ✓
+    sets.clj         -- set variable propagators (GLB/LUB)                  ✓
+    extensional.clj  -- regular, cost-regular                               (Phase 6)
+    graph.clj        -- graph constraint decomposition/propagation          (Phase 7)
 ```
 
 ## Testing Strategy
@@ -1139,17 +1141,17 @@ A test helper:
 ## Dependency / Ordering Constraints
 
 ```
-Phase 0 (dispatch) ─── must come first
+Phase 0 (dispatch) ✓
     |
-Phase 1 (domains + engine) ─── foundation for everything
+Phase 1 (domains + engine) ✓
     |
-Phase 2 (basic propagators) ─── needed before search works
+Phase 2 (basic propagators) ✓
     |
-Phase 3 (search) ─── makes the solver actually useful
+Phase 3 (search) ✓
     |
-    ├── Phase 4 (globals) ─── can be done independently
-    ├── Phase 5 (sets) ─── can be done independently
-    ├── Phase 6 (extensional) ─── can be done independently
+    ├── Phase 4 (globals) ✓ ─── alldifferent bounds + table
+    ├── Phase 5 (sets) ✓ ─── GLB/LUB domains, set propagators
+    ├── Phase 6 (extensional) ─── regular, cost-regular
     |
 Phase 7 (graph) ─── needs Phase 5 (set domains) for Strategy B
     |              ─── needs Phase 4 (alldifferent) for circuit
@@ -1163,3 +1165,29 @@ Phases 4, 5, and 6 are independent of each other and can be developed in
 any order after Phase 3. Phase 7 depends on 4 (for circuit's alldifferent)
 and conceptually on 5 (for Strategy B set propagation on graph constraints),
 but Strategy A decompositions only need Phase 2+3.
+
+## Implementation Notes
+
+Deviations from the original spec during implementation:
+
+**Flattener fixes (shared infrastructure).** The flattener had two bugs
+exposed by the native solver that also improved the MiniZinc path:
+1. Bare Decisions were being substituted, causing postwalk key mismatches
+   when the same Decision appeared in multiple sibling terms. Fixed by
+   excluding Decisions from substitution.
+2. Set-typed expressions and ground values were preserved by the flattener
+   (skipping substitution). Removed both special cases — the flattener now
+   substitutes all non-ground, non-IInclude compound terms uniformly. Ground
+   values are excluded because they have no decision variables. Unbound set
+   impl decisions get their MiniZinc range derived from the universal LUB.
+
+**Objective variable normalization.** `prepare-model` now ensures the
+objective is always a Decision (introduces one if the flattened objective
+is still a term expression). Both backends benefit.
+
+**`fixpoint.clj` as separate namespace.** The fixpoint engine was extracted
+from `engine.clj` to break a circular dependency between engine and search.
+
+**File layout.** `native/sets.clj` was created as specified. `native/fixpoint.clj`
+was added (not in original spec). `native/extensional.clj` and `native/graph.clj`
+not yet created.
